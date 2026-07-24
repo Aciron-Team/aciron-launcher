@@ -15,6 +15,7 @@ export type Settings = {
   autoadd_server: boolean;
   jvm_args: string;
   auto_update_check: boolean;
+  fullscreen: boolean;
 };
 
 export const isTauri =
@@ -35,6 +36,7 @@ const mockSettings: Settings = {
   autoadd_server: true,
   jvm_args: "",
   auto_update_check: true,
+  fullscreen: false,
 };
 
 export async function getSettings(): Promise<Settings> {

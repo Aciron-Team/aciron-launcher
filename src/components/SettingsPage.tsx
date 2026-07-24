@@ -362,19 +362,27 @@ export default function SettingsPage() {
                       <span>16 ГБ</span>
                     </div>
                   </div>
-                  <Field label="Размер окна игры">
+                  <Field
+                    label="Запуск в полноэкранном режиме"
+                    hint="Игра будет открываться на весь экран (через options.txt)"
+                  >
+                    <Toggle value={s.fullscreen} onChange={(v) => update({ fullscreen: v })} />
+                  </Field>
+                  <Field label="Размер окна игры" hint="Если полноэкранный режим выключен">
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
-                        className="w-20 rounded-lg border border-border bg-bg px-2 py-1.5 text-center text-sm text-text outline-none focus:border-accent"
+                        className="w-20 rounded-lg border border-border bg-bg px-2 py-1.5 text-center text-sm text-text outline-none focus:border-accent disabled:opacity-50"
                         value={s.window_width}
+                        disabled={s.fullscreen}
                         onChange={(e) => update({ window_width: Number(e.target.value) })}
                       />
                       <i className="fa-solid fa-xmark text-xs text-muted" />
                       <input
                         type="number"
-                        className="w-20 rounded-lg border border-border bg-bg px-2 py-1.5 text-center text-sm text-text outline-none focus:border-accent"
+                        className="w-20 rounded-lg border border-border bg-bg px-2 py-1.5 text-center text-sm text-text outline-none focus:border-accent disabled:opacity-50"
                         value={s.window_height}
+                        disabled={s.fullscreen}
                         onChange={(e) => update({ window_height: Number(e.target.value) })}
                       />
                     </div>

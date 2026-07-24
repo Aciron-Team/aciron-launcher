@@ -357,6 +357,11 @@ async fn prepare_and_launch(
         ensure_test_server(&game_dir);
     }
 
+    // Полноэкранный режим — у Minecraft нет CLI-флага, задаётся через options.txt.
+    if settings.fullscreen {
+        ensure_fullscreen(&game_dir);
+    }
+
     // 1) Манифест → url версии
     emit(app, "manifest", "Получение списка версий", 0, 1);
     let manifest = get_json(&client, MANIFEST).await?;
@@ -751,6 +756,28 @@ fn ensure_test_server(game_dir: &Path) {
     }
     let data = build_servers_nbt(&[(TEST_SERVER_NAME, TEST_SERVER_IP)]);
     let _ = std::fs::write(&path, data);
+}
+
+/// Включает полноэкранный режим через <game_dir>/options.txt (строка `fullscreen:true`).
+/// Существующий options.txt не перетираем — только правим/добавляем нужную строку.
+fn ensure_fullscreen(game_dir: &Path) {
+    let path = game_dir.join("options.txt");
+    let _ = std::fs::create_dir_all(game_dir);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in existing.lines() {
+        if line.starts_with("fullscreen:") {
+            lines.push("fullscreen:true".to_string());
+            found = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !found {
+        lines.push("fullscreen:true".to_string());
+    }
+    let _ = std::fs::write(&path, lines.join("\n") + "\n");
 }
 
 /// Собирает бинарь servers.dat (несжатый NBT): root-compound → list "servers"

@@ -42,6 +42,9 @@ pub struct Settings {
 
     #[serde(default = "default_true")]
     pub auto_update_check: bool,
+
+    #[serde(default)]
+    pub fullscreen: bool,
 }
 
 fn default_true() -> bool {
@@ -66,6 +69,7 @@ impl Default for Settings {
             autoadd_server: true,
             jvm_args: String::new(),
             auto_update_check: true,
+            fullscreen: false,
         }
     }
 }

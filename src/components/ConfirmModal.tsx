@@ -1,0 +1,47 @@
+import Modal from "./Modal";
+
+export default function ConfirmModal({
+  title = "Подтверждение",
+  message,
+  confirmLabel = "Удалить",
+  danger = true,
+  onConfirm,
+  onClose,
+}: {
+  title?: string;
+  message: string;
+  confirmLabel?: string;
+  danger?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={title} icon="fa-triangle-exclamation" onClose={onClose}>
+      <div className="p-5">
+        <p className="text-sm text-text">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted transition-colors hover:text-text"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+            className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold text-white transition-colors ${
+              danger
+                ? "bg-[#ef4444] hover:bg-[#dc2626] active:bg-[#b91c1c]"
+                : "bg-accent text-bg hover:bg-accent-hover"
+            }`}
+          >
+            <i className="fa-solid fa-trash-can text-xs" />
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}

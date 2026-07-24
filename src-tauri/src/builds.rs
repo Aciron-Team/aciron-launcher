@@ -1,0 +1,407 @@
+use crate::settings::{self, open_folder};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_kind() -> String {
+    "mod".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstalledMod {
+    pub project_id: String,
+    pub version_id: String,
+    pub name: String,
+    pub filename: String,
+    #[serde(default)]
+    pub icon_url: String,
+
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(default = "default_kind")]
+    pub kind: String,
+}
+
+fn kind_subdir(kind: &str) -> &'static str {
+    match kind {
+        "resourcepack" => "resourcepacks",
+        "shader" => "shaderpacks",
+        _ => "mods",
+    }
+}
+
+/// Допустимые расширения файлов для типа контента.
+fn kind_exts(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "resourcepack" | "shader" => &["zip"],
+        _ => &["jar"],
+    }
+}
+
+/// Имя файла без суффикса .disabled.
+fn base_name(f: &str) -> String {
+    f.strip_suffix(".disabled").unwrap_or(f).to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Build {
+    pub id: String,
+    pub name: String,
+    pub mc_version: String,
+    /// fabric | forge | neoforge | quilt
+    pub loader: String,
+    #[serde(default)]
+    pub loader_version: String,
+    #[serde(default)]
+    pub mods: Vec<InstalledMod>,
+    #[serde(default)]
+    pub created: u64,
+    /// Папка сборки на диске (латиница, транслит имени). Пусто у старых сборок → берётся id.
+    #[serde(default)]
+    pub dir: String,
+    /// Имя файла обложки в папке сборки ("" = нет).
+    #[serde(default)]
+    pub image: String,
+    /// Публичный URL обложки (иконка модпака Modrinth) — для Discord RPC. "" = нет.
+    #[serde(default)]
+    pub icon_url: String,
+    /// ID проекта-модпака Modrinth, из которого собрана сборка ("" = не из модпака).
+    /// Нужен для дозагрузки обложки и будущих обновлений.
+    #[serde(default)]
+    pub source_id: String,
+}
+
+/// Транслитерация кириллицы + очистка под имя папки.
+fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.chars() {
+        let lower = ch.to_lowercase().next().unwrap_or(ch);
+        let mapped: &str = match lower {
+            'а' => "a", 'б' => "b", 'в' => "v", 'г' => "g", 'д' => "d",
+            'е' | 'ё' => "e", 'ж' => "zh", 'з' => "z", 'и' | 'й' => "i",
+            'к' => "k", 'л' => "l", 'м' => "m", 'н' => "n", 'о' => "o",
+            'п' => "p", 'р' => "r", 'с' => "s", 'т' => "t", 'у' => "u",
+            'ф' => "f", 'х' => "h", 'ц' => "c", 'ч' => "ch", 'ш' => "sh",
+            'щ' => "sch", 'ы' => "y", 'э' => "e", 'ю' => "yu", 'я' => "ya",
+            'ъ' | 'ь' => "",
+            c if c.is_ascii_alphanumeric() => {
+                out.push(c);
+                continue;
+            }
+            _ => "-",
+        };
+        out.push_str(mapped);
+    }
+    // схлопываем дефисы, обрезаем края
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for c in out.chars() {
+        if c == '-' {
+            if !prev_dash && !slug.is_empty() {
+                slug.push('-');
+            }
+            prev_dash = true;
+        } else {
+            slug.push(c);
+            prev_dash = false;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+/// Уникальное имя папки (латиница) для новой сборки.
+fn unique_dir(name: &str) -> String {
+    let base = {
+        let s = slugify(name);
+        if s.is_empty() { "build".to_string() } else { s }
+    };
+    let s = settings::load_settings();
+    let root = PathBuf::from(&s.builds_dir);
+    let taken: Vec<String> = load_builds().iter().map(|b| b.dir.clone()).collect();
+    let mut candidate = base.clone();
+    let mut i = 2;
+    while root.join(&candidate).exists() || taken.iter().any(|d| d == &candidate) {
+        candidate = format!("{base}-{i}");
+        i += 1;
+    }
+    candidate
+}
+
+fn store_file() -> PathBuf {
+    settings::launcher_root().join("builds.json")
+}
+
+pub fn load_builds() -> Vec<Build> {
+    match std::fs::read_to_string(store_file()) {
+        Ok(txt) => serde_json::from_str(&txt).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_builds(list: &[Build]) -> Result<(), String> {
+    let file = store_file();
+    if let Some(p) = file.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    let txt = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
+    std::fs::write(file, txt).map_err(|e| e.to_string())
+}
+
+/// Папка данных конкретной сборки: <builds_dir>/<dir|id>.
+pub fn build_dir(id: &str) -> PathBuf {
+    let s = settings::load_settings();
+    let folder = get_build(id)
+        .map(|b| if b.dir.is_empty() { b.id } else { b.dir })
+        .unwrap_or_else(|| id.to_string());
+    PathBuf::from(&s.builds_dir).join(folder)
+}
+
+pub fn mods_dir(id: &str) -> PathBuf {
+    build_dir(id).join("mods")
+}
+
+/// Папка контента конкретного типа внутри сборки.
+pub fn content_dir(id: &str, kind: &str) -> PathBuf {
+    build_dir(id).join(kind_subdir(kind))
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn gen_id() -> String {
+    format!("{:x}", md5::compute(now_secs().to_string() + &fastrand_suffix()))
+}
+
+fn fastrand_suffix() -> String {
+    // немного энтропии, чтобы id не совпадали при быстром создании
+    format!("{:?}", SystemTime::now())
+}
+
+pub fn get_build(id: &str) -> Option<Build> {
+    load_builds().into_iter().find(|b| b.id == id)
+}
+
+pub fn upsert_build(build: Build) -> Result<(), String> {
+    let mut list = load_builds();
+    if let Some(existing) = list.iter_mut().find(|b| b.id == build.id) {
+        *existing = build;
+    } else {
+        list.push(build);
+    }
+    save_builds(&list)
+}
+
+#[tauri::command]
+pub fn get_builds() -> Vec<Build> {
+    load_builds()
+}
+
+#[tauri::command]
+pub fn create_build(name: String, mc_version: String, loader: String) -> Result<Build, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Введите название сборки".into());
+    }
+    if mc_version.is_empty() {
+        return Err("Выберите версию Minecraft".into());
+    }
+    let dir = unique_dir(&name);
+    let build = Build {
+        id: gen_id(),
+        name,
+        mc_version,
+        loader,
+        loader_version: String::new(),
+        mods: Vec::new(),
+        created: now_secs(),
+        dir: dir.clone(),
+        image: String::new(),
+        icon_url: String::new(),
+        source_id: String::new(),
+    };
+    let s = settings::load_settings();
+    let base = PathBuf::from(&s.builds_dir).join(&dir);
+    for sub in ["mods", "resourcepacks", "shaderpacks"] {
+        let _ = std::fs::create_dir_all(base.join(sub));
+    }
+    let mut list = load_builds();
+    list.push(build.clone());
+    save_builds(&list)?;
+    Ok(build)
+}
+
+#[tauri::command]
+pub fn delete_build(id: String) -> Result<(), String> {
+    let mut list = load_builds();
+    list.retain(|b| b.id != id);
+    save_builds(&list)?;
+    let dir = build_dir(&id);
+    if dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_build_folder(id: String) -> Result<(), String> {
+    let dir = build_dir(&id);
+    open_folder(dir.to_string_lossy().into_owned())
+}
+
+/// Ставит обложку сборки (копирует картинку в папку сборки).
+#[tauri::command]
+pub fn set_build_image(build_id: String, src_path: String) -> Result<Build, String> {
+    let mut build = get_build(&build_id).ok_or("Сборка не найдена")?;
+    let src = PathBuf::from(&src_path);
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let filename = format!("cover.{ext}");
+    let dir = build_dir(&build_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if !build.image.is_empty() {
+        let _ = std::fs::remove_file(dir.join(&build.image));
+    }
+    std::fs::copy(&src, dir.join(&filename)).map_err(|e| e.to_string())?;
+    build.image = filename;
+    upsert_build(build.clone())?;
+    Ok(build)
+}
+
+/// Возвращает обложку сборки как data-URL (base64), либо None.
+#[tauri::command]
+pub fn get_build_image(build_id: String) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let build = get_build(&build_id)?;
+    if build.image.is_empty() {
+        return None;
+    }
+    let path = build_dir(&build_id).join(&build.image);
+    let bytes = std::fs::read(&path).ok()?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    Some(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
+}
+
+/// Включает/выключает мод (переименовывает файл, добавляя/убирая .disabled).
+#[tauri::command]
+pub fn toggle_mod(build_id: String, project_id: String) -> Result<Build, String> {
+    let mut build = get_build(&build_id).ok_or("Сборка не найдена")?;
+    if let Some(m) = build.mods.iter_mut().find(|m| m.project_id == project_id) {
+        let dir = build_dir(&build_id).join(kind_subdir(&m.kind));
+        let cur = dir.join(&m.filename);
+        let new_name = if m.enabled {
+            format!("{}.disabled", m.filename)
+        } else {
+            m.filename
+                .strip_suffix(".disabled")
+                .unwrap_or(&m.filename)
+                .to_string()
+        };
+        let _ = std::fs::rename(&cur, dir.join(&new_name));
+        m.filename = new_name;
+        m.enabled = !m.enabled;
+    }
+    upsert_build(build.clone())?;
+    Ok(build)
+}
+
+/// Удаляет мод из сборки и его файл.
+#[tauri::command]
+pub fn remove_mod(build_id: String, project_id: String) -> Result<Build, String> {
+    let mut build = get_build(&build_id).ok_or("Сборка не найдена")?;
+    if let Some(m) = build.mods.iter().find(|m| m.project_id == project_id) {
+        let file = build_dir(&build_id).join(kind_subdir(&m.kind)).join(&m.filename);
+        let _ = std::fs::remove_file(file);
+    }
+    build.mods.retain(|m| m.project_id != project_id);
+    upsert_build(build.clone())?;
+    Ok(build)
+}
+
+/// Синхронизирует список контента сборки с файлами на диске: подхватывает
+/// вручную добавленные моды/ресурспаки/шейдеры и убирает удалённые файлы.
+#[tauri::command]
+pub fn refresh_build_content(build_id: String) -> Result<Build, String> {
+    use std::collections::HashMap;
+    let mut build = get_build(&build_id).ok_or("Сборка не найдена")?;
+    let mut kept: Vec<InstalledMod> = Vec::new();
+
+    for kind in ["mod", "resourcepack", "shader"] {
+        let dir = build_dir(&build_id).join(kind_subdir(kind));
+        let _ = std::fs::create_dir_all(&dir);
+        let exts = kind_exts(kind);
+
+        // известные записи этого типа, по базовому имени файла
+        let mut known: HashMap<String, InstalledMod> = build
+            .mods
+            .iter()
+            .filter(|m| m.kind == kind)
+            .map(|m| (base_name(&m.filename), m.clone()))
+            .collect();
+
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                if !e.path().is_file() {
+                    continue;
+                }
+                let fname = e.file_name().to_string_lossy().to_string();
+                let is_disabled = fname.ends_with(".disabled");
+                let core = fname.strip_suffix(".disabled").unwrap_or(&fname);
+                if !exts.iter().any(|x| core.to_lowercase().ends_with(&format!(".{x}"))) {
+                    continue;
+                }
+                let base = base_name(&fname);
+                match known.remove(&base) {
+                    // файл уже отслеживается — обновляем имя/состояние
+                    Some(mut m) => {
+                        m.filename = fname.clone();
+                        m.enabled = !is_disabled;
+                        kept.push(m);
+                    }
+                    // добавлен вручную — заводим запись
+                    None => {
+                        let pretty = core
+                            .trim_end_matches(".jar")
+                            .trim_end_matches(".zip")
+                            .to_string();
+                        kept.push(InstalledMod {
+                            project_id: format!("local:{kind}:{base}"),
+                            version_id: String::new(),
+                            name: pretty,
+                            filename: fname,
+                            icon_url: String::new(),
+                            enabled: !is_disabled,
+                            kind: kind.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        // оставшиеся в known — файлы удалены с диска → в список не попадают
+    }
+
+    build.mods = kept;
+    upsert_build(build.clone())?;
+    Ok(build)
+}

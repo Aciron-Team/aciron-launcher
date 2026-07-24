@@ -1,0 +1,36 @@
+# --- Node / Vite ---
+node_modules
+dist
+dist-ssr
+*.local
+
+# --- Rust / Tauri ---
+src-tauri/target
+src-tauri/gen
+
+# --- Secrets / local config (не публикуем) ---
+.env
+.env.*
+*.key
+*.pem
+secrets.json
+**/apikeys.json
+**/*.secret.*
+
+# --- Личные / рабочие файлы ---
+TODO.md
+launcher-screenshot.png
+/aciron-launcher
+
+# --- Логи и временное ---
+*.log
+npm-debug.log*
+.cache
+
+# --- ОС / IDE ---
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+*.suo
+*.user

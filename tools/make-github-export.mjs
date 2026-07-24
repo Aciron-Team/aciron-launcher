@@ -97,7 +97,13 @@ if (OUT === ROOT) {
   console.error("Папка назначения совпадает с проектом — прерываю.");
   process.exit(1);
 }
-fs.rmSync(OUT, { recursive: true, force: true });
+
+if (fs.existsSync(OUT)) {
+  for (const entry of fs.readdirSync(OUT)) {
+    if (entry === ".git") continue;
+    fs.rmSync(path.join(OUT, entry), { recursive: true, force: true });
+  }
+}
 walk(ROOT, OUT);
 console.log(`Готово → ${OUT}`);
 console.log(`Файлов скопировано: ${copied}, из них с вырезанными комментариями: ${stripped}`);

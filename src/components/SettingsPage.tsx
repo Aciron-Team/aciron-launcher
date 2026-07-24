@@ -321,6 +321,14 @@ export default function SettingsPage() {
                       запасной.
                     </p>
                   </Field>
+                  <Field label="JVM-аргументы" hint="Доп. флаги виртуальной машины при запуске (через пробел)" column>
+                    <input
+                      className={`${inputCls} font-mono`}
+                      value={s.jvm_args}
+                      placeholder="-XX:+UseG1GC -Dfile.encoding=UTF-8"
+                      onChange={(e) => update({ jvm_args: e.target.value })}
+                    />
+                  </Field>
                 </Card>
               </>
             )}
@@ -409,6 +417,15 @@ export default function SettingsPage() {
                     hint="Добавляет топ 5 серверов из категории Сервера в список серверов"
                   >
                     <Toggle value={s.autoadd_server} onChange={(v) => update({ autoadd_server: v })} />
+                  </Field>
+                  <Field
+                    label="Проверять обновления при запуске"
+                    hint="Показывать зелёную кнопку скачивания у версии, если вышло обновление"
+                  >
+                    <Toggle
+                      value={s.auto_update_check}
+                      onChange={(v) => update({ auto_update_check: v })}
+                    />
                   </Field>
                 </Card>
               </>

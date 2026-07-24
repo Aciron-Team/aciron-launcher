@@ -36,6 +36,12 @@ pub struct Settings {
 
     #[serde(default = "default_true")]
     pub autoadd_server: bool,
+
+    #[serde(default)]
+    pub jvm_args: String,
+
+    #[serde(default = "default_true")]
+    pub auto_update_check: bool,
 }
 
 fn default_true() -> bool {
@@ -58,6 +64,8 @@ impl Default for Settings {
             background_anim: None,
             discord_rpc: true,
             autoadd_server: true,
+            jvm_args: String::new(),
+            auto_update_check: true,
         }
     }
 }

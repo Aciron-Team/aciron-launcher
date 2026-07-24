@@ -8,12 +8,6 @@ type GameServer = {
 };
 
 const SERVERS: GameServer[] = [
-  {
-    name: "Aciron — тестовый сервер",
-    ip: "mc.aciron.pro",
-    desc: "Официальный тестовый сервер лаунчера. Добавляется в список серверов игры автоматически.",
-    wip: true,
-  },
 ];
 
 function ServerCard({ s }: { s: GameServer }) {

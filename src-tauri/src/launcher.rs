@@ -554,6 +554,10 @@ async fn prepare_and_launch(
         format!("-Xms{}M", (ram / 2).max(512)),
         format!("-Djava.library.path={}", natives_dir.to_string_lossy()),
     ];
+    // Пользовательские JVM-аргументы из настроек (через пробел).
+    for a in settings.jvm_args.split_whitespace() {
+        args.push(a.to_string());
+    }
     // Aciron Skins: свой java-агент. Тянет скины лицензионных аккаунтов Mojang
     // по нику игрока и показывает их в игре — в т.ч. на пиратке. Сервер не нужен.
     if let Some(jar) = ensure_aciron_skins(&root) {

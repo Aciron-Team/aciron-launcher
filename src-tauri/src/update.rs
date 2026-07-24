@@ -2,7 +2,7 @@ use serde::Serialize;
 
 pub const APP_VERSION: &str = "0.7.7";
 
-const GITHUB_REPO: &str = "aciron-pro/aciron-launcher";
+const GITHUB_REPO: &str = "Acizecu/aciron-launcher";
 
 #[derive(Serialize, Default)]
 pub struct UpdateInfo {

@@ -269,62 +269,86 @@ export default function BuildsPage() {
           }
           return (
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <div className="space-y-1.5">
-                {items.map((m) => (
-                  <div
-                    key={m.project_id}
-                    className={`group flex items-center gap-3.5 rounded-xl border bg-card p-3 transition-all hover:border-accent/40 ${
-                      m.enabled ? "border-border" : "border-border/60 opacity-60"
-                    }`}
-                  >
-                    <div className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg">
-                      {m.icon_url ? (
-                        <img src={m.icon_url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <i className={`fa-solid ${meta.icon} text-muted`} />
-                      )}
-                      <span
-                        className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${
-                          m.enabled ? "bg-[#4caf50]" : "bg-muted"
-                        }`}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-bold text-text">{m.name}</span>
-                        {m.project_id.startsWith("local:") && (
-                          <span className="shrink-0 rounded bg-bg px-1.5 py-0.5 text-[10px] text-muted">
-                            вручную
-                          </span>
-                        )}
-                      </div>
-                      <div className="truncate text-[11px] text-muted">
-                        {m.enabled ? m.filename : "Выключен"}
-                      </div>
-                    </div>
-                    {}
-                    <button
-                      onClick={() => toggleOneMod(m.project_id)}
-                      title={m.enabled ? "Выключить" : "Включить"}
-                      className={`relative h-6 w-11 shrink-0 rounded-full opacity-0 transition-all group-hover:opacity-100 ${
-                        m.enabled ? "bg-accent" : "bg-border"
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(244px,1fr))] gap-2.5">
+                {items.map((m) => {
+                  const manual = m.project_id.startsWith("local:");
+                  return (
+                    <div
+                      key={m.project_id}
+                      className={`group relative flex flex-col rounded-2xl border bg-card p-3 transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-[0_8px_24px_-12px] hover:shadow-accent/40 ${
+                        m.enabled ? "border-border" : "border-border/50 opacity-70"
                       }`}
                     >
-                      <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
-                          m.enabled ? "left-[22px]" : "left-0.5"
-                        }`}
-                      />
-                    </button>
-                    <button
-                      onClick={() => removeOneMod(m.project_id, m.name)}
-                      title="Удалить"
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted opacity-0 transition-opacity hover:text-[#ef4444] group-hover:opacity-100"
-                    >
-                      <i className="fa-solid fa-trash-can" />
-                    </button>
-                  </div>
-                ))}
+                      {}
+                      <button
+                        onClick={() => removeOneMod(m.project_id, m.name)}
+                        title="Удалить"
+                        className="absolute right-2 top-2 z-10 grid h-7 w-7 place-items-center rounded-lg bg-bg/70 text-muted opacity-0 backdrop-blur-sm transition-opacity hover:text-[#ef4444] group-hover:opacity-100"
+                      >
+                        <i className="fa-solid fa-trash-can text-xs" />
+                      </button>
+
+                      <div className="flex items-start gap-3">
+                        <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg">
+                          {m.icon_url ? (
+                            <img src={m.icon_url} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <i className={`fa-solid ${meta.icon} text-lg text-muted`} />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1 pr-6">
+                          <div className="truncate text-sm font-bold text-text" title={m.name}>
+                            {m.name}
+                          </div>
+                          <div
+                            className="mt-0.5 truncate text-[11px] text-muted"
+                            title={m.filename}
+                          >
+                            {m.filename || "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span
+                            className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              m.enabled
+                                ? "bg-[#4caf50]/15 text-[#4caf50]"
+                                : "bg-muted/15 text-muted"
+                            }`}
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${
+                                m.enabled ? "bg-[#4caf50]" : "bg-muted"
+                              }`}
+                            />
+                            {m.enabled ? "Включён" : "Выключен"}
+                          </span>
+                          {manual && (
+                            <span className="shrink-0 rounded-full bg-bg px-2 py-0.5 text-[10px] text-muted">
+                              вручную
+                            </span>
+                          )}
+                        </div>
+                        {}
+                        <button
+                          onClick={() => toggleOneMod(m.project_id)}
+                          title={m.enabled ? "Выключить" : "Включить"}
+                          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                            m.enabled ? "bg-accent" : "bg-border"
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                              m.enabled ? "left-[18px]" : "left-0.5"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );

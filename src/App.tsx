@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import TitleBar from "./components/TitleBar";
 import Sidebar, { type NavId } from "./components/Sidebar";
 import PlayBar from "./components/PlayBar";
+import DownloadBar from "./components/DownloadBar";
 import Home from "./components/Home";
 import BuildsPage from "./components/BuildsPage";
 import FriendsPage from "./components/FriendsPage";
@@ -46,7 +47,12 @@ function AppInner() {
               {active === "servers" && <ServersPage />}
               {active === "settings" && <SettingsPage />}
             </main>
-            {active !== "settings" && <PlayBar />}
+            {active !== "settings" && (
+              <>
+                <DownloadBar />
+                <PlayBar />
+              </>
+            )}
           </div>
         </div>
       </div>

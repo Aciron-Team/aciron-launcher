@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { APP_VERSION, APP_CHANNEL } from "../config";
-import { checkUpdate, openUrl, type UpdateInfo } from "../api";
+import { checkUpdate, getSettings, openUrl, type UpdateInfo } from "../api";
 
 const appWindow = (() => {
   try {
@@ -16,8 +16,11 @@ export default function TitleBar() {
 
   useEffect(() => {
     let alive = true;
-    checkUpdate().then((u) => {
-      if (alive && u.available) setUpdate(u);
+    getSettings().then((s) => {
+      if (!alive || !s.auto_update_check) return;
+      checkUpdate().then((u) => {
+        if (alive && u.available) setUpdate(u);
+      });
     });
     return () => {
       alive = false;

@@ -13,6 +13,8 @@ export type Settings = {
   background_anim: boolean | null;
   discord_rpc: boolean;
   autoadd_server: boolean;
+  jvm_args: string;
+  auto_update_check: boolean;
 };
 
 export const isTauri =
@@ -31,6 +33,8 @@ const mockSettings: Settings = {
   background_anim: null,
   discord_rpc: true,
   autoadd_server: true,
+  jvm_args: "",
+  auto_update_check: true,
 };
 
 export async function getSettings(): Promise<Settings> {

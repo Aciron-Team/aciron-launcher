@@ -157,6 +157,28 @@ body {
   animation: progress-slide 1.3s linear infinite;
   box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
 }
+/* тёплый (акцентный) вариант заливки — под палитру лаунчера */
+.progress-accent {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-accent-active),
+    var(--color-accent),
+    var(--color-accent-hover),
+    var(--color-accent),
+    var(--color-accent-active)
+  );
+  background-size: 200% 100%;
+  animation: progress-slide 1.3s linear infinite;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+/* дышащая точка «идёт загрузка» */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.7); }
+}
+.pulse-dot {
+  animation: pulse-dot 1s ease-in-out infinite;
+}
 /* бегущий блик поверх заливки */
 @keyframes progress-shine {
   0% {

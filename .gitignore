@@ -22,6 +22,9 @@ TODO.md
 launcher-screenshot.png
 /aciron-launcher
 
+# --- Артефакты релиза (генерируются, не в репо) ---
+latest.json
+
 # --- Логи и временное ---
 *.log
 npm-debug.log*

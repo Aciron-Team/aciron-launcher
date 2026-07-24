@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,5 +39,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2MDVGRjJFOEFGMjNGNgpSV1QySTYvbzhsOWdEM0o2VlpWZHFwNjlwZG1FRnk0d0crdzFnM0tiTGpYT1hyazA3V0l0OW1idQo=",
+      "endpoints": [
+        "https://github.com/Acizecu/aciron-launcher/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

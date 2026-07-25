@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import {
-  modrinthProject,
-  modrinthInstall,
-  modrinthInstallVersion,
+  contentProject,
+  installContent,
+  installContentVersion,
   openUrl,
   type Build,
   type ContentKind,
   type ModHit,
   type ModProject,
   type ModVersion,
+  type SourceId,
 } from "../api";
 import { useToast } from "../ToastContext";
 import VersionList from "./VersionList";
+import Lightbox from "./Lightbox";
 
 const loaderLabel: Record<string, string> = {
   fabric: "Fabric",
@@ -30,12 +32,14 @@ export default function ModDetail({
   build,
   hit,
   kind = "mod",
+  source = "modrinth",
   onBack,
   onInstalled,
 }: {
   build: Build;
   hit: ModHit;
   kind?: ContentKind;
+  source?: SourceId;
   onBack: () => void;
   onInstalled: (b: Build) => void;
 }) {
@@ -43,11 +47,12 @@ export default function ModDetail({
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"about" | "versions">("about");
   const [verBusy, setVerBusy] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<number | null>(null);
   const toast = useToast();
 
   useEffect(() => {
-    modrinthProject(hit.project_id).then(setProject).catch(() => {});
-  }, [hit.project_id]);
+    contentProject(source, hit.project_id).then(setProject).catch(() => {});
+  }, [source, hit.project_id]);
 
   const installedMod = build.mods.find((m) => m.project_id === hit.project_id);
   const installed = !!installedMod;
@@ -56,7 +61,7 @@ export default function ModDetail({
     if (verBusy) return;
     setVerBusy(v.id);
     try {
-      const updated = await modrinthInstallVersion(build.id, hit.project_id, v.id);
+      const updated = await installContentVersion(source, build.id, hit.project_id, v.id);
       onInstalled(updated);
       toast(`«${hit.title}» ${v.version_number} установлен`, "success");
     } catch (e) {
@@ -73,7 +78,7 @@ export default function ModDetail({
     if (installed || busy) return;
     setBusy(true);
     try {
-      const updated = await modrinthInstall(build.id, hit.project_id);
+      const updated = await installContent(source, build.id, hit.project_id);
       onInstalled(updated);
       toast(`«${hit.title}» установлен`, "success");
     } catch (e) {
@@ -87,8 +92,13 @@ export default function ModDetail({
   const downloads = project?.downloads ?? hit.downloads;
   const gallery = project?.gallery ?? [];
 
+  const siteLink =
+    source === "curseforge"
+      ? { label: "CurseForge", url: project?.website_url || `https://www.curseforge.com/minecraft/search?search=${encodeURIComponent(slug)}` }
+      : { label: "Modrinth", url: `https://modrinth.com/mod/${slug}` };
+
   const links: { label: string; url?: string; icon: string }[] = [
-    { label: "Modrinth", url: `https://modrinth.com/mod/${slug}`, icon: "fa-arrow-up-right-from-square" },
+    { label: siteLink.label, url: siteLink.url, icon: "fa-arrow-up-right-from-square" },
     { label: "Исходники", url: project?.source_url, icon: "fa-code" },
     { label: "Проблемы", url: project?.issues_url, icon: "fa-bug" },
     { label: "Wiki", url: project?.wiki_url, icon: "fa-book" },
@@ -172,8 +182,10 @@ export default function ModDetail({
         {tab === "versions" ? (
           <div className="p-4">
             <VersionList
+              source={source}
               projectId={hit.project_id}
               currentVersionId={installedMod?.version_id}
+              showFilters
               busyId={verBusy}
               onPick={installVersion}
             />
@@ -184,12 +196,21 @@ export default function ModDetail({
         {gallery.length > 0 && (
           <div className="flex gap-3 overflow-x-auto border-b border-border p-4">
             {gallery.map((g, i) => (
-              <img
+              <button
                 key={i}
-                src={g.url}
-                alt={g.title ?? ""}
-                className="h-40 shrink-0 rounded-lg border border-border object-cover"
-              />
+                onClick={() => setLightbox(i)}
+                title="Открыть"
+                className="group relative h-40 shrink-0 overflow-hidden rounded-lg border border-border"
+              >
+                <img
+                  src={g.url}
+                  alt={g.title ?? ""}
+                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                />
+                <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                  <i className="fa-solid fa-magnifying-glass-plus text-white" />
+                </span>
+              </button>
             ))}
           </div>
         )}
@@ -243,6 +264,10 @@ export default function ModDetail({
           </>
         )}
       </div>
+
+      {lightbox !== null && (
+        <Lightbox images={gallery} index={lightbox} onClose={() => setLightbox(null)} />
+      )}
     </div>
   );
 }

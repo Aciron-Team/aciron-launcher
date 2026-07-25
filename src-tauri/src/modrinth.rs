@@ -114,7 +114,10 @@ pub async fn change_build_version(build_id: String, mc_version: String) -> Resul
     for m in build.mods.iter_mut() {
         let dir = builds::content_dir(&build_id, &m.kind);
 
-        if m.project_id.starts_with("local:") || m.project_id.starts_with("mrpack:") {
+        if m.project_id.starts_with("local:")
+            || m.project_id.starts_with("mrpack:")
+            || m.project_id.starts_with("cf:")
+        {
             continue;
         }
         let vloader: Option<&str> = if m.kind == "mod" { Some(loader.as_str()) } else { None };
@@ -323,36 +326,6 @@ pub async fn install_modpack(
     builds::upsert_build(build.clone())?;
     emit(&app, "done", "Модпак установлен", 1, 1);
     Ok(build)
-}
-
-pub async fn resolve_cover(source_id: &str, name: &str) -> Option<String> {
-    let cl = http().ok()?;
-    if !source_id.is_empty() {
-        let (_t, icon) = project_title(&cl, source_id).await;
-        if !icon.is_empty() {
-            return Some(icon);
-        }
-    }
-    if name.trim().is_empty() {
-        return None;
-    }
-    let facets = serde_json::to_string(&vec![vec!["project_type:modpack".to_string()]]).ok()?;
-    let resp = cl
-        .get(format!("{API}/search"))
-        .query(&[
-            ("query", name),
-            ("facets", facets.as_str()),
-            ("limit", "1"),
-        ])
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let json: Value = resp.json().await.ok()?;
-    let icon = json["hits"].as_array()?.first()?["icon_url"].as_str()?.to_string();
-    (!icon.is_empty()).then_some(icon)
 }
 
 #[tauri::command]

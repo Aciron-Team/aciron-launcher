@@ -84,7 +84,7 @@ export default function DownloadBar() {
           <div className="relative h-2 w-full overflow-hidden rounded-full bg-bg">
             {!isError && (
               <div
-                className="progress-shine progress-accent relative h-full rounded-full transition-[width] duration-300"
+                className="progress-shine progress-accent relative h-full overflow-hidden rounded-full transition-[width] duration-300"
                 style={{ width: indeterminate ? "40%" : `${pct}%` }}
               />
             )}

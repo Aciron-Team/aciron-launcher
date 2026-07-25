@@ -197,10 +197,13 @@ function applyPalette(p: Palette) {
   root.style.colorScheme = luminance(p.bg) < 0.5 ? "dark" : "light";
 }
 
+export type SavedPreset = { id: string; name: string; bg: string; accent: string };
+
 type ThemeState = {
   id: ThemeId;
   customBg: string;
   customAccent: string;
+  saved: SavedPreset[];
 };
 
 const STORAGE_KEY = "aciron:theme";
@@ -208,6 +211,7 @@ const DEFAULT_STATE: ThemeState = {
   id: "standard",
   customBg: "#12131a",
   customAccent: "#6366f1",
+  saved: [],
 };
 
 function load(): ThemeState {
@@ -228,8 +232,12 @@ export function paletteOf(s: ThemeState): Palette {
 type Ctx = {
   state: ThemeState;
   palette: Palette;
+  saved: SavedPreset[];
   setTheme: (id: ThemeId) => void;
   setCustom: (patch: Partial<Pick<ThemeState, "customBg" | "customAccent">>) => void;
+  savePreset: (name: string) => void;
+  applySaved: (p: SavedPreset) => void;
+  deleteSaved: (id: string) => void;
 };
 
 const ThemeCtx = createContext<Ctx | null>(null);
@@ -247,8 +255,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const value: Ctx = {
     state,
     palette,
+    saved: state.saved,
     setTheme: (id) => setState((s) => ({ ...s, id })),
     setCustom: (patch) => setState((s) => ({ ...s, id: "custom", ...patch })),
+    savePreset: (name) =>
+      setState((s) => ({
+        ...s,
+        saved: [
+          ...s.saved,
+          { id: String(Date.now()), name: name.trim(), bg: s.customBg, accent: s.customAccent },
+        ],
+      })),
+    applySaved: (p) =>
+      setState((s) => ({ ...s, id: "custom", customBg: p.bg, customAccent: p.accent })),
+    deleteSaved: (id) => setState((s) => ({ ...s, saved: s.saved.filter((p) => p.id !== id) })),
   };
 
   return <ThemeCtx.Provider value={value}>{children}</ThemeCtx.Provider>;

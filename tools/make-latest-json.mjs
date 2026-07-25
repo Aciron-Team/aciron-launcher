@@ -25,7 +25,7 @@ if (!fs.existsSync(sigPath)) {
 const signature = fs.readFileSync(sigPath, "utf8").trim();
 
 const assetName = exe.replace(/ /g, ".");
-const url = `https://github.com/${REPO}/releases/download/v${version}/${assetName}`;
+const url = `https://github.com/${REPO}/releases/latest/download/${assetName}`;
 
 const manifest = {
   version,

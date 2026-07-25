@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { projectVersions, type ModVersion } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { contentVersions, type ModVersion, type SourceId } from "../api";
+import Dropdown from "./Dropdown";
 
 const typeMeta: Record<string, { label: string; color: string }> = {
   release: { label: "Релиз", color: "#4ade80" },
@@ -7,29 +8,61 @@ const typeMeta: Record<string, { label: string; color: string }> = {
   alpha: { label: "Alpha", color: "#f87171" },
 };
 
+function cmpMc(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pb[i] ?? 0) - (pa[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
 export default function VersionList({
+  source = "modrinth",
   projectId,
   currentVersionId,
   actionLabel = "Установить",
+  showFilters = false,
   busyId,
   onPick,
 }: {
+  source?: SourceId;
   projectId: string;
   currentVersionId?: string;
   actionLabel?: string;
+  showFilters?: boolean;
   busyId?: string | null;
   onPick: (v: ModVersion) => void;
 }) {
   const [versions, setVersions] = useState<ModVersion[] | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [mcFilter, setMcFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
 
   useEffect(() => {
     setVersions(null);
     setShowAll(false);
-    projectVersions(projectId)
+    setMcFilter("");
+    setTypeFilter("");
+    contentVersions(source, projectId)
       .then(setVersions)
       .catch(() => setVersions([]));
-  }, [projectId]);
+  }, [source, projectId]);
+
+  const mcOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const v of versions ?? []) for (const g of v.game_versions ?? []) set.add(g);
+    return [...set].sort(cmpMc);
+  }, [versions]);
+
+  const filtered = useMemo(() => {
+    return (versions ?? []).filter(
+      (v) =>
+        (!mcFilter || (v.game_versions ?? []).includes(mcFilter)) &&
+        (!typeFilter || v.version_type === typeFilter)
+    );
+  }, [versions, mcFilter, typeFilter]);
 
   if (versions === null) {
     return (
@@ -39,74 +72,106 @@ export default function VersionList({
       </div>
     );
   }
-  if (versions.length === 0) {
-    return <div className="p-8 text-center text-sm text-muted">Версий не найдено.</div>;
-  }
 
-  const shown = showAll ? versions : versions.slice(0, 40);
+  const shown = showAll ? filtered : filtered.slice(0, 40);
 
   return (
     <div className="space-y-2">
-      {shown.map((v) => {
-        const meta = typeMeta[v.version_type] ?? { label: v.version_type, color: "var(--color-muted)" };
-        const isCurrent = !!currentVersionId && v.id === currentVersionId;
-        const isBusy = busyId === v.id;
-        const gv = v.game_versions ?? [];
-        return (
-          <div
-            key={v.id}
-            className="flex items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-2.5"
-          >
-            <span
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg"
-              style={{ background: `color-mix(in srgb, ${meta.color} 16%, transparent)`, color: meta.color }}
-            >
-              <i className="fa-solid fa-file-zipper text-xs" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-semibold text-text">
-                  {v.version_number || v.name}
-                </span>
-                <span
-                  className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
-                  style={{ color: meta.color, background: `color-mix(in srgb, ${meta.color} 14%, transparent)` }}
-                >
-                  {meta.label}
-                </span>
-              </div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
-                <span>
-                  {gv.slice(0, 4).join(", ")}
-                  {gv.length > 4 ? "…" : ""}
-                </span>
-                {v.loaders?.length > 0 && <span className="capitalize">· {v.loaders.join(", ")}</span>}
-                {v.date_published && (
-                  <span>· {new Date(v.date_published).toLocaleDateString("ru-RU")}</span>
-                )}
-              </div>
-            </div>
-            <button
-              onClick={() => !isCurrent && !isBusy && onPick(v)}
-              disabled={isCurrent || isBusy}
-              className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
-                isCurrent
-                  ? "cursor-default bg-bg text-text"
-                  : "bg-accent text-bg hover:bg-accent-hover active:bg-accent-active disabled:opacity-60"
-              }`}
-            >
-              <i className={`fa-solid ${isBusy ? "fa-spinner fa-spin" : isCurrent ? "fa-check" : "fa-download"}`} />
-              {isBusy ? "…" : isCurrent ? "Текущая" : actionLabel}
-            </button>
+      {showFilters && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Dropdown
+            value={mcFilter}
+            onChange={setMcFilter}
+            options={[{ value: "", label: "Все версии MC" }, ...mcOptions.map((v) => ({ value: v, label: v }))]}
+            className="w-40"
+          />
+          <div className="flex gap-1 rounded-lg bg-bg p-1">
+            {[
+              ["", "Все"],
+              ["release", "Релиз"],
+              ["beta", "Beta"],
+              ["alpha", "Alpha"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setTypeFilter(id)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  typeFilter === id ? "bg-accent text-bg" : "text-muted hover:text-text"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-        );
-      })}
-      {!showAll && versions.length > 40 && (
+          <span className="ml-auto text-[11px] text-muted">{filtered.length} версий</span>
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="p-8 text-center text-sm text-muted">Версий не найдено.</div>
+      ) : (
+        shown.map((v) => {
+          const meta = typeMeta[v.version_type] ?? { label: v.version_type, color: "var(--color-muted)" };
+          const isCurrent = !!currentVersionId && v.id === currentVersionId;
+          const isBusy = busyId === v.id;
+          const gv = v.game_versions ?? [];
+          return (
+            <div
+              key={v.id}
+              className="flex items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-2.5"
+            >
+              <span
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg"
+                style={{ background: `color-mix(in srgb, ${meta.color} 16%, transparent)`, color: meta.color }}
+              >
+                <i className="fa-solid fa-file-zipper text-xs" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-text">
+                    {v.version_number || v.name}
+                  </span>
+                  <span
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                    style={{ color: meta.color, background: `color-mix(in srgb, ${meta.color} 14%, transparent)` }}
+                  >
+                    {meta.label}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
+                  <span>
+                    {gv.slice(0, 4).join(", ")}
+                    {gv.length > 4 ? "…" : ""}
+                  </span>
+                  {v.loaders?.length > 0 && <span className="capitalize">· {v.loaders.join(", ")}</span>}
+                  {v.date_published && (
+                    <span>· {new Date(v.date_published).toLocaleDateString("ru-RU")}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => !isCurrent && !isBusy && onPick(v)}
+                disabled={isCurrent || isBusy}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                  isCurrent
+                    ? "cursor-default bg-bg text-text"
+                    : "bg-accent text-bg hover:bg-accent-hover active:bg-accent-active disabled:opacity-60"
+                }`}
+              >
+                <i className={`fa-solid ${isBusy ? "fa-spinner fa-spin" : isCurrent ? "fa-check" : "fa-download"}`} />
+                {isBusy ? "…" : isCurrent ? "Текущая" : actionLabel}
+              </button>
+            </div>
+          );
+        })
+      )}
+
+      {!showAll && filtered.length > 40 && (
         <button
           onClick={() => setShowAll(true)}
           className="w-full rounded-lg border border-border py-2 text-xs text-muted transition-colors hover:text-text"
         >
-          Показать все ({versions.length})
+          Показать все ({filtered.length})
         </button>
       )}
     </div>

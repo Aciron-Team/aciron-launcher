@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  modrinthSearch,
-  modrinthCategories,
-  modrinthInstall,
+  searchContent,
+  contentCategories,
+  installContent,
   type Build,
   type ContentKind,
   type ModHit,
 } from "../api";
 import ModDetail from "./ModDetail";
-import SourceMenu, { SourceComingSoon, type Source } from "./SourceMenu";
+import SourceMenu, { type Source } from "./SourceMenu";
+import Dropdown from "./Dropdown";
 import { useToast } from "../ToastContext";
 
 const PER_PAGE = 25;
@@ -80,14 +81,16 @@ export default function ModsBrowser({
   const loaderFilter = ctype === "mod" ? build.loader : "";
 
   useEffect(() => {
-    modrinthCategories().then(setAllCats).catch(() => {});
-  }, []);
+    if (source === "ftb") return;
+    contentCategories(source).then(setAllCats).catch(() => {});
+  }, [source]);
 
   useEffect(() => {
+    if (source === "ftb") return;
     const my = ++seq.current;
     setLoading(true);
     setError("");
-    modrinthSearch(applied, loaderFilter, build.mc_version, cats, index, page * PER_PAGE, PER_PAGE, ptype)
+    searchContent(source, applied, loaderFilter, build.mc_version, cats, index, page * PER_PAGE, PER_PAGE, ptype)
       .then((r) => {
         if (my !== seq.current) return;
         setHits(r.hits);
@@ -95,11 +98,17 @@ export default function ModsBrowser({
       })
       .catch((e) => my === seq.current && setError(String(e)))
       .finally(() => my === seq.current && setLoading(false));
-  }, [applied, cats, index, page, loaderFilter, build.mc_version, ptype]);
+  }, [source, applied, cats, index, page, loaderFilter, build.mc_version, ptype]);
 
   const doSearch = () => {
     setPage(0);
     setApplied(query);
+  };
+
+  const pickSource = (s: Source) => {
+    setSource(s);
+    setPage(0);
+    setCats([]);
   };
 
   const pickCtype = (id: ContentKind) => {
@@ -112,7 +121,7 @@ export default function ModsBrowser({
     if (installedIds.has(h.project_id) || installing) return;
     setInstalling(h.project_id);
     try {
-      const updated = await modrinthInstall(build.id, h.project_id);
+      const updated = await installContent(source, build.id, h.project_id);
       onInstalled(updated);
       toast(`«${h.title}» установлен`, "success");
     } catch (e) {
@@ -141,6 +150,7 @@ export default function ModsBrowser({
         build={build}
         hit={detailMod}
         kind={ctype}
+        source={source}
         onBack={() => setDetailMod(null)}
         onInstalled={onInstalled}
       />
@@ -164,7 +174,7 @@ export default function ModsBrowser({
             {total ? ` · найдено ${total}` : ""}
           </div>
         </div>
-        <SourceMenu value={source} onChange={setSource} />
+        <SourceMenu value={source} onChange={pickSource} allow={["modrinth", "curseforge"]} />
         {}
         <div className="flex gap-1 rounded-lg bg-bg p-1">
           {CTYPES.map((c) => (
@@ -183,8 +193,19 @@ export default function ModsBrowser({
         </div>
       </div>
 
-      {source !== "modrinth" ? (
-        <SourceComingSoon source={source} />
+      {source === "ftb" ? (
+        <div className="grid flex-1 place-items-center px-6 text-center">
+          <div className="max-w-sm">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-card text-accent">
+              <i className="fa-solid fa-layer-group text-2xl" />
+            </div>
+            <h2 className="text-lg font-bold text-text">FTB — это готовые сборки</h2>
+            <p className="mt-1.5 text-sm leading-relaxed text-muted">
+              У Feed The Beast нет отдельных модов — только целые модпаки. Найти их можно во
+              вкладке «Сборки» → «Добавить сборку».
+            </p>
+          </div>
+        </div>
       ) : (
       <>
       {}
@@ -195,7 +216,9 @@ export default function ModsBrowser({
             <input
               autoFocus
               className="w-full bg-transparent py-2 text-sm text-text outline-none placeholder:text-muted/60"
-              placeholder={`Поиск: ${CTYPES.find((c) => c.id === ctype)!.label.toLowerCase()} на Modrinth…`}
+              placeholder={`Поиск: ${CTYPES.find((c) => c.id === ctype)!.label.toLowerCase()} на ${
+                source === "curseforge" ? "CurseForge" : "Modrinth"
+              }…`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doSearch()}
@@ -208,20 +231,16 @@ export default function ModsBrowser({
             <i className="fa-solid fa-magnifying-glass text-xs" />
             Поиск
           </button>
-          <select
+          <Dropdown
             value={index}
-            onChange={(e) => {
+            onChange={(v) => {
               setPage(0);
-              setIndex(e.target.value);
+              setIndex(v);
             }}
-            className="rounded-lg border border-border bg-bg px-2 py-2 text-sm text-text outline-none"
-          >
-            {SORTS.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+            options={SORTS.map((s) => ({ value: s.id, label: s.label }))}
+            className="w-40"
+            align="right"
+          />
           {ctype === "mod" && (
             <button
               onClick={() => setShowFilters((v) => !v)}
@@ -272,53 +291,65 @@ export default function ModsBrowser({
         ) : hits.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted">Ничего не найдено</div>
         ) : (
-          <div className="grid gap-2">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
             {hits.map((h) => {
               const isInstalled = installedIds.has(h.project_id);
               return (
                 <div
                   key={h.project_id}
                   onClick={() => setDetailMod(h)}
-                  className="group flex cursor-pointer items-center gap-3.5 rounded-xl border border-border bg-card p-3 transition-all hover:border-accent/50 hover:bg-card/80"
+                  className="group flex cursor-pointer flex-col rounded-2xl border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-[0_10px_30px_-14px] hover:shadow-accent/40"
                 >
-                  <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg">
-                    {h.icon_url ? (
-                      <img src={h.icon_url} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <i className="fa-solid fa-cube text-lg text-muted" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-bold text-text group-hover:text-accent">
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg">
+                      {h.icon_url ? (
+                        <img src={h.icon_url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <i className="fa-solid fa-cube text-lg text-muted" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-bold text-text group-hover:text-accent">
                         {h.title}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-muted">
+                      </div>
+                      {h.author && (
+                        <div className="truncate text-[11px] text-muted">
+                          <i className="fa-solid fa-user mr-1" />
+                          {h.author}
+                        </div>
+                      )}
+                      <div className="mt-0.5 text-[11px] text-muted">
                         <i className="fa-solid fa-download mr-1" />
                         {fmt(h.downloads)}
-                      </span>
-                    </div>
-                    <div className="line-clamp-1 text-xs text-muted">{h.description}</div>
-                    {h.categories.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {h.categories.slice(0, 3).map((c) => (
-                          <span
-                            key={c}
-                            className="rounded-full bg-bg px-2 py-0.5 text-[10px] capitalize text-muted"
-                          >
-                            {c}
-                          </span>
-                        ))}
                       </div>
-                    )}
+                    </div>
                   </div>
+
+                  <p className="mt-2.5 line-clamp-2 min-h-[2.4em] text-xs leading-relaxed text-muted">
+                    {h.description}
+                  </p>
+
+                  {h.categories.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {h.categories.slice(0, 3).map((c) => (
+                        <span
+                          key={c}
+                          className="rounded-full bg-bg px-2 py-0.5 text-[10px] capitalize text-muted"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex-1" />
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       install(h);
                     }}
                     disabled={isInstalled || !!installing}
-                    className={`flex w-32 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                    className={`mt-3 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
                       isInstalled
                         ? "cursor-default bg-bg text-text"
                         : "bg-accent text-bg hover:bg-accent-hover active:bg-accent-active disabled:opacity-60"

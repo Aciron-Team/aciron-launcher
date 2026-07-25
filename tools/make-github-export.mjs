@@ -10,6 +10,7 @@ const OUT = path.resolve(process.argv[2] ?? path.join(ROOT, "..", "aciron-launch
 const SKIP_DIRS = new Set([
   "node_modules", "dist", "dist-ssr", "target", "gen", ".git",
   ".idea", ".vscode", "github-export", "aciron-launcher",
+  ".cargo",
 ]);
 const SKIP_FILES = new Set([
   "TODO.md", "launcher-screenshot.png", ".DS_Store", "Thumbs.db",

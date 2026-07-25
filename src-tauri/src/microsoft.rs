@@ -1,12 +1,19 @@
 use crate::accounts::{self, Account};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
-const CLIENT_ID: &str = "3c12b570-456a-40eb-890c-c6b0bbd91f65";
+const CLIENT_ID: &str = match option_env!("ACIRON_MS_CLIENT_ID") {
+    Some(v) => v,
+    None => "",
+};
 
-const DEVICE_CODE_URL: &str =
-    "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
+const AUTH_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
 const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 const SCOPE: &str = "XboxLive.signin offline_access";
 
@@ -17,13 +24,85 @@ fn http() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn urldecode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+                out.push(b'%');
+                i += 1;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[tauri::command]
 pub async fn add_microsoft_account(app: AppHandle) -> Result<Account, String> {
-    let cl = http()?;
+    if CLIENT_ID.is_empty() {
+        return Err("Вход Microsoft не настроен в этой сборке (нет client_id)".into());
+    }
 
-    let dc: Value = cl
-        .post(DEVICE_CODE_URL)
-        .form(&[("client_id", CLIENT_ID), ("scope", SCOPE)])
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("Не удалось открыть локальный порт: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let redirect = format!("http://localhost:{port}");
+
+    let mut raw = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw);
+    let verifier = URL_SAFE_NO_PAD.encode(raw);
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+
+    let auth_url = format!(
+        "{AUTH_URL}?client_id={cid}&response_type=code&redirect_uri={ru}&response_mode=query\
+         &scope={sc}&code_challenge={ch}&code_challenge_method=S256&prompt=select_account",
+        cid = CLIENT_ID,
+        ru = urlencode(&redirect),
+        sc = urlencode(SCOPE),
+        ch = challenge,
+    );
+    let _ = app.emit("ms-auth-open", json!({ "url": auth_url }));
+
+    let code = wait_for_code(&listener, Duration::from_secs(300)).await?;
+
+    let cl = http()?;
+    let tok: Value = cl
+        .post(TOKEN_URL)
+        .form(&[
+            ("client_id", CLIENT_ID),
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect.as_str()),
+            ("code_verifier", verifier.as_str()),
+            ("scope", SCOPE),
+        ])
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -31,70 +110,74 @@ pub async fn add_microsoft_account(app: AppHandle) -> Result<Account, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    if let Some(err) = dc.get("error").and_then(|v| v.as_str()) {
-        let desc = dc["error_description"].as_str().unwrap_or(err);
+    if let Some(err) = tok.get("error").and_then(|v| v.as_str()) {
+        let desc = tok["error_description"].as_str().unwrap_or(err);
         return Err(format!("Microsoft: {desc}"));
     }
-
-    let device_code = dc["device_code"].as_str().unwrap_or("").to_string();
-    let user_code = dc["user_code"].as_str().unwrap_or("").to_string();
-    let verification_uri = dc["verification_uri"]
+    let ms_access = tok["access_token"]
         .as_str()
-        .unwrap_or("https://microsoft.com/link")
+        .ok_or("Microsoft: не получен токен доступа")?
         .to_string();
-    let interval = dc["interval"].as_u64().unwrap_or(5);
-    let expires_in = dc["expires_in"].as_u64().unwrap_or(900);
-
-    let _ = app.emit(
-        "ms-device-code",
-        json!({
-            "user_code": user_code,
-            "verification_uri": verification_uri,
-            "expires_in": expires_in,
-        }),
-    );
-
-    let mut waited = 0u64;
-    let mut delay = interval;
-    let (ms_access, refresh) = loop {
-        tokio::time::sleep(Duration::from_secs(delay)).await;
-        waited += delay;
-        if waited > expires_in {
-            return Err("Время ожидания входа истекло, попробуйте снова".into());
-        }
-
-        let tok: Value = cl
-            .post(TOKEN_URL)
-            .form(&[
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ("client_id", CLIENT_ID),
-                ("device_code", &device_code),
-            ])
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if let Some(at) = tok["access_token"].as_str() {
-            let rt = tok["refresh_token"].as_str().unwrap_or("").to_string();
-            break (at.to_string(), rt);
-        }
-        match tok["error"].as_str() {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                delay += 5;
-                continue;
-            }
-            Some("expired_token") => return Err("Код входа истёк, попробуйте снова".into()),
-            Some("authorization_declined") => return Err("Вход отменён".into()),
-            Some(e) => return Err(format!("Microsoft: {e}")),
-            None => return Err("Неизвестный ответ Microsoft".into()),
-        }
-    };
+    let refresh = tok["refresh_token"].as_str().unwrap_or("").to_string();
 
     finish_login(&cl, &ms_access, &refresh).await
+}
+
+async fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<String, String> {
+    let accept = async {
+        loop {
+            let (mut stream, _) = listener.accept().await.map_err(|e| e.to_string())?;
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).await.map_err(|e| e.to_string())?;
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let path = req
+                .lines()
+                .next()
+                .and_then(|l| l.split_whitespace().nth(1))
+                .unwrap_or("");
+            let query = path.split('?').nth(1).unwrap_or("");
+            let params: HashMap<String, String> = query
+                .split('&')
+                .filter_map(|kv| {
+                    let mut it = kv.splitn(2, '=');
+                    Some((it.next()?.to_string(), it.next().unwrap_or("").to_string()))
+                })
+                .collect();
+
+            if let Some(err) = params.get("error") {
+                reply(&mut stream, "Вход не удался. Можно закрыть вкладку и вернуться в лаунчер.").await;
+                return Err(format!("Microsoft: {}", urldecode(err)));
+            }
+            if let Some(code) = params.get("code") {
+                reply(&mut stream, "Готово! Вернитесь в Aciron Launcher — вкладку можно закрыть.").await;
+                return Ok(urldecode(code));
+            }
+
+            let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").await;
+        }
+    };
+    match tokio::time::timeout(timeout, accept).await {
+        Ok(r) => r,
+        Err(_) => Err("Время ожидания входа истекло, попробуйте снова".into()),
+    }
+}
+
+async fn reply(stream: &mut tokio::net::TcpStream, msg: &str) {
+    let body = format!(
+        "<!doctype html><html lang=ru><meta charset=utf-8>\
+         <title>Aciron Launcher</title>\
+         <body style=\"margin:0;height:100vh;display:grid;place-items:center;\
+         font-family:system-ui,Segoe UI,sans-serif;background:#12131a;color:#e7e3dd\">\
+         <div style=\"text-align:center\"><div style=\"font-size:44px\">✅</div>\
+         <p style=\"font-size:16px;max-width:360px;line-height:1.5\">{msg}</p></div></body></html>"
+    );
+    let resp = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(resp.as_bytes()).await;
+    let _ = stream.flush().await;
 }
 
 pub async fn refresh_account(refresh_token: &str) -> Result<Account, String> {

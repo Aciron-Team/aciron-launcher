@@ -174,7 +174,16 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(true);
   const [hwCap, setHwCap] = useState(true);
   const [cat, setCat] = useState<CatId>("theme");
-  const { state: theme, setTheme, setCustom } = useTheme();
+  const {
+    state: theme,
+    setTheme,
+    setCustom,
+    saved: themePresets,
+    savePreset,
+    applySaved,
+    deleteSaved,
+  } = useTheme();
+  const [presetName, setPresetName] = useState("");
 
   useEffect(() => {
     getSettings().then(setS);
@@ -284,11 +293,75 @@ export default function SettingsPage() {
                         value={theme.customAccent}
                         onChange={(v) => setCustom({ customAccent: v })}
                       />
-                      <span className="text-[11px] text-muted">
-                        Остальные оттенки подбираются автоматически
-                      </span>
+                    </div>
+                    {}
+                    <div className="flex items-center gap-2 border-t border-border px-4 py-3">
+                      <input
+                        className={inputCls}
+                        value={presetName}
+                        maxLength={24}
+                        placeholder="Название пресета"
+                        onChange={(e) => setPresetName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && presetName.trim()) {
+                            savePreset(presetName);
+                            setPresetName("");
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          if (!presetName.trim()) return;
+                          savePreset(presetName);
+                          setPresetName("");
+                        }}
+                        disabled={!presetName.trim()}
+                        className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active disabled:opacity-50"
+                      >
+                        <i className="fa-solid fa-floppy-disk" />
+                        Сохранить
+                      </button>
                     </div>
                   </Card>
+                )}
+
+                {}
+                {themePresets.length > 0 && (
+                  <div>
+                    <span className="mb-2 block text-xs text-muted">Мои пресеты</span>
+                    <div className="flex flex-wrap gap-2">
+                      {themePresets.map((p) => (
+                        <div
+                          key={p.id}
+                          className="group flex items-center gap-2 rounded-xl border border-border bg-card py-1.5 pl-2 pr-1.5 transition-colors hover:border-accent/50"
+                        >
+                          <button
+                            onClick={() => applySaved(p)}
+                            className="flex items-center gap-2"
+                            title="Применить пресет"
+                          >
+                            <span
+                              className="h-6 w-6 shrink-0 rounded-md border border-border"
+                              style={{ background: p.bg }}
+                            >
+                              <span
+                                className="block h-full w-1/2 rounded-l-md"
+                                style={{ background: p.accent }}
+                              />
+                            </span>
+                            <span className="text-sm font-medium text-text">{p.name}</span>
+                          </button>
+                          <button
+                            onClick={() => deleteSaved(p.id)}
+                            title="Удалить пресет"
+                            className="grid h-6 w-6 place-items-center rounded-md text-muted transition-colors hover:text-[#ef4444]"
+                          >
+                            <i className="fa-solid fa-xmark text-xs" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -317,8 +390,7 @@ export default function SettingsPage() {
                       </button>
                     </div>
                     <p className="mt-2 text-[11px] text-muted">
-                      Для новых версий Java скачивается автоматически — этот путь используется как
-                      запасной.
+                      Путь к Java дирректории
                     </p>
                   </Field>
                   <Field label="JVM-аргументы" hint="Доп. флаги виртуальной машины при запуске (через пробел)" column>
@@ -364,7 +436,7 @@ export default function SettingsPage() {
                   </div>
                   <Field
                     label="Запуск в полноэкранном режиме"
-                    hint="Игра будет открываться на весь экран (через options.txt)"
+                    hint="Игра будет открываться на весь экран"
                   >
                     <Toggle value={s.fullscreen} onChange={(v) => update({ fullscreen: v })} />
                   </Field>
@@ -393,7 +465,7 @@ export default function SettingsPage() {
 
             {cat === "behavior" && (
               <>
-                <h2 className="text-lg font-bold text-text">Поведение</h2>
+                <h2 className="text-lg font-bold text-text">Поведение лаунчера</h2>
                 <Card>
                   <Field
                     label="Скрывать лаунчер при запуске игры"
@@ -403,11 +475,7 @@ export default function SettingsPage() {
                   </Field>
                   <Field
                     label="Анимация фона"
-                    hint={
-                      s.background_anim === null
-                        ? `Авто по железу: сейчас ${hwCap ? "включена" : "выключена"}`
-                        : "Плавающие кубики на фоне лаунчера"
-                    }
+                    hint={"Плавающие кубики на фоне лаунчера"}
                   >
                     <Toggle
                       value={s.background_anim ?? hwCap}
@@ -428,7 +496,7 @@ export default function SettingsPage() {
                   </Field>
                   <Field
                     label="Проверять обновления при запуске"
-                    hint="Показывать зелёную кнопку скачивания у версии, если вышло обновление"
+                    hint=""
                   >
                     <Toggle
                       value={s.auto_update_check}

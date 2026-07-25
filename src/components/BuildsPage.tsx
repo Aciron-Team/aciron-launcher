@@ -18,6 +18,8 @@ import BuildCover from "./BuildCover";
 import BuildSettingsModal from "./BuildSettingsModal";
 import ModpackBrowser from "./ModpackBrowser";
 import { useToast } from "../ToastContext";
+import { useLauncherCtx } from "../LauncherContext";
+import { useDownloadActive } from "../downloadTask";
 
 const loaderLabel: Record<string, string> = {
   fabric: "Fabric",
@@ -25,6 +27,17 @@ const loaderLabel: Record<string, string> = {
   neoforge: "NeoForge",
   quilt: "Quilt",
 };
+
+const BUILDS_PER_PAGE = 8;
+
+function fmtPlaytime(secs: number): string {
+  if (!secs) return "";
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (h > 0) return `${h}ч ${m}м`;
+  if (m > 0) return `${m}м`;
+  return "<1м";
+}
 
 const CONTENT_TABS: { id: ContentKind; label: string; icon: string; empty: string }[] = [
   { id: "mod", label: "Моды", icon: "fa-puzzle-piece", empty: "Найдите и установите моды с Modrinth" },
@@ -46,7 +59,12 @@ export default function BuildsPage() {
   const [tab, setTab] = useState<"mine" | "popular">("mine");
   const [contentTab, setContentTab] = useState<ContentKind>("mod");
   const [browseKind, setBrowseKind] = useState<ContentKind>("mod");
+  const [page, setPage] = useState(0);
   const toast = useToast();
+  const { launch, status, gameRunning } = useLauncherCtx();
+  const downloading = useDownloadActive();
+
+  const launchBusy = status === "running" || gameRunning || downloading;
 
   const updateBuild = (updated: Build) =>
     setBuilds((list) => list.map((b) => (b.id === updated.id ? updated : b)));
@@ -87,6 +105,10 @@ export default function BuildsPage() {
   const confirmDelete = async () => {
     const b = confirmDel;
     if (!b) return;
+    if (launchBusy) {
+      toast("Нельзя удалить сборку во время запуска или скачивания", "error");
+      return;
+    }
     await deleteBuild(b.id);
     await refresh();
     toast(`Сборка «${b.name}» удалена`, "success");
@@ -412,32 +434,91 @@ export default function BuildsPage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {builds.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => openBuild(b.id)}
-                className="group flex items-center gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:border-accent/50"
-              >
-                <BuildCover build={b} className="h-12 w-12" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-text">{b.name}</div>
-                  <div className="truncate text-xs text-muted">
-                    {b.mc_version} · {loaderLabel[b.loader] ?? b.loader}
-                  </div>
-                  <div className="text-[11px] text-muted">{b.mods.length} модов</div>
+          (() => {
+            const totalPages = Math.ceil(builds.length / BUILDS_PER_PAGE);
+            const safePage = Math.min(page, Math.max(0, totalPages - 1));
+            const pageBuilds = builds.slice(
+              safePage * BUILDS_PER_PAGE,
+              safePage * BUILDS_PER_PAGE + BUILDS_PER_PAGE
+            );
+            return (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  {pageBuilds.map((b) => (
+                    <div
+                      key={b.id}
+                      onClick={() => openBuild(b.id)}
+                      className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:border-accent/50"
+                    >
+                      <BuildCover build={b} className="h-12 w-12" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-semibold text-text">{b.name}</span>
+                          {b.playtime_secs > 0 && (
+                            <span
+                              title="Наиграно"
+                              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-bg px-1.5 py-0.5 text-[10px] text-muted"
+                            >
+                              <i className="fa-solid fa-clock text-[9px]" />
+                              {fmtPlaytime(b.playtime_secs)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-xs text-muted">
+                          {b.mc_version} · {loaderLabel[b.loader] ?? b.loader}
+                        </div>
+                        <div className="text-[11px] text-muted">{b.mods.length} модов</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (launchBusy) return;
+                            launch(`build:${b.id}`);
+                            toast(`Запуск «${b.name}»…`, "success");
+                          }}
+                          disabled={launchBusy}
+                          title="Запустить сборку"
+                          className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active disabled:opacity-50"
+                        >
+                          <i className={`fa-solid ${launchBusy ? "fa-spinner fa-spin" : "fa-play"}`} />
+                          Запустить
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (launchBusy) return;
+                            setConfirmDel(b);
+                          }}
+                          disabled={launchBusy}
+                          title={launchBusy ? "Недоступно во время запуска/скачивания" : "Удалить сборку"}
+                          className="grid h-8 w-8 place-items-center rounded-lg text-muted opacity-0 transition-opacity hover:text-[#ef4444] group-hover:opacity-100 disabled:cursor-not-allowed disabled:hover:text-muted"
+                        >
+                          <i className="fa-solid fa-trash-can text-sm" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <i
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setConfirmDel(b);
-                  }}
-                  title="Удалить сборку"
-                  className="fa-solid fa-trash-can p-1.5 text-muted opacity-0 transition-opacity hover:text-[#ef4444] group-hover:opacity-100"
-                />
-              </button>
-            ))}
-          </div>
+
+                {totalPages > 1 && (
+                  <div className="mt-4 flex items-center justify-center gap-1.5">
+                    {Array.from({ length: totalPages }, (_, i) => i).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPage(p)}
+                        className={`h-8 min-w-8 rounded-lg px-2 text-sm font-semibold transition-colors ${
+                          p === safePage ? "bg-accent text-bg" : "text-muted hover:bg-card hover:text-text"
+                        }`}
+                      >
+                        {p + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()
         )}
       </div>
       )}

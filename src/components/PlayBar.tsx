@@ -1,19 +1,38 @@
 import { useEffect, useState } from "react";
 import VersionMenu from "./VersionMenu";
 import AccountMenu from "./AccountMenu";
-import { getSettings, openFolder } from "../api";
+import AddAccountModal from "./AddAccountModal";
+import { getSettings, getAccounts, openFolder } from "../api";
 import { useLauncherCtx } from "../LauncherContext";
+import { useDownloadActive } from "../downloadTask";
 
 export default function PlayBar() {
   const [versionsDir, setVersionsDir] = useState("");
   const [versionId, setVersionId] = useState<string | null>(null);
+  const [hasAccount, setHasAccount] = useState(true);
+  const [addAccount, setAddAccount] = useState(false);
   const { status, launch, gameRunning, stop } = useLauncherCtx();
+  const downloading = useDownloadActive();
+
+  const refreshAccounts = () =>
+    getAccounts().then((a) => setHasAccount(a.accounts.length > 0)).catch(() => {});
 
   useEffect(() => {
     getSettings().then((s) => setVersionsDir(s.versions_dir));
+    refreshAccounts();
   }, []);
 
-  const busy = status === "running";
+  const busy = status === "running" || downloading;
+
+  const onPlay = () => {
+    if (busy || !versionId) return;
+
+    if (!hasAccount) {
+      setAddAccount(true);
+      return;
+    }
+    launch(versionId);
+  };
 
   return (
     <div className="flex h-20 shrink-0 items-center gap-3 border-t border-border bg-panel px-4">
@@ -27,13 +46,15 @@ export default function PlayBar() {
         </button>
       ) : (
         <button
-          onClick={() => versionId && launch(versionId)}
+          onClick={onPlay}
           disabled={busy || !versionId}
           title={!versionId ? "Сначала установите версию" : undefined}
           className="group flex h-14 min-w-[168px] items-center justify-center gap-3 rounded-xl bg-accent px-9 font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active disabled:cursor-not-allowed disabled:opacity-60"
         >
           <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-play"} text-base`} />
-          <span className="text-lg tracking-wide">{busy ? "Загрузка…" : "Играть"}</span>
+          <span className="text-lg tracking-wide">
+            {downloading ? "Скачивание…" : busy ? "Загрузка…" : "Играть"}
+          </span>
         </button>
       )}
 
@@ -51,6 +72,13 @@ export default function PlayBar() {
       <div className="ml-auto flex items-center gap-3">
         <AccountMenu />
       </div>
+
+      {addAccount && (
+        <AddAccountModal
+          onClose={() => setAddAccount(false)}
+          onAdded={refreshAccounts}
+        />
+      )}
     </div>
   );
 }

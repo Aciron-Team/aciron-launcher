@@ -74,6 +74,30 @@ pub struct Build {
     /// Нужен для дозагрузки обложки и будущих обновлений.
     #[serde(default)]
     pub source_id: String,
+    /// Суммарное время игры на сборке в секундах.
+    #[serde(default)]
+    pub playtime_secs: u64,
+}
+
+/// Добавляет секунды к наигранному времени сборки.
+pub fn add_playtime(build_id: &str, secs: u64) {
+    if let Some(mut b) = get_build(build_id) {
+        b.playtime_secs += secs;
+        let _ = upsert_build(b);
+    }
+}
+
+/// Переименовывает сборку (папка на диске не меняется).
+#[tauri::command]
+pub fn rename_build(build_id: String, name: String) -> Result<Build, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Введите название сборки".into());
+    }
+    let mut b = get_build(&build_id).ok_or("Сборка не найдена")?;
+    b.name = name;
+    upsert_build(b.clone())?;
+    Ok(b)
 }
 
 /// Транслитерация кириллицы + очистка под имя папки.
@@ -227,6 +251,7 @@ pub fn create_build(name: String, mc_version: String, loader: String) -> Result<
         image: String::new(),
         icon_url: String::new(),
         source_id: String::new(),
+        playtime_secs: 0,
     };
     let s = settings::load_settings();
     let base = PathBuf::from(&s.builds_dir).join(&dir);

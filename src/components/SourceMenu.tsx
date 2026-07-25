@@ -11,21 +11,24 @@ export const SOURCES: {
   ready: boolean;
 }[] = [
   { id: "modrinth", label: "Modrinth", Icon: ModrinthIcon, ready: true },
-  { id: "curseforge", label: "CurseForge", Icon: CurseForgeIcon, ready: false },
-  { id: "ftb", label: "FTB", Icon: FtbIcon, ready: false },
+  { id: "curseforge", label: "CurseForge", Icon: CurseForgeIcon, ready: true },
+  { id: "ftb", label: "FTB", Icon: FtbIcon, ready: true },
 ];
 
 export default function SourceMenu({
   value,
   onChange,
+  allow,
 }: {
   value: Source;
   onChange: (s: Source) => void;
+  allow?: Source[];
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useClickOutside(ref, () => setOpen(false));
 
+  const sources = allow ? SOURCES.filter((s) => allow.includes(s.id)) : SOURCES;
   const cur = SOURCES.find((s) => s.id === value)!;
 
   return (
@@ -41,7 +44,7 @@ export default function SourceMenu({
 
       {open && (
         <div className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-xl border border-border bg-panel shadow-xl shadow-black/40">
-          {SOURCES.map((s) => (
+          {sources.map((s) => (
             <button
               key={s.id}
               onClick={() => {

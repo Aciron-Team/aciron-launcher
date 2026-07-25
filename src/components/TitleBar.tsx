@@ -18,6 +18,20 @@ export default function TitleBar() {
   const [update, setUpdate] = useState<any>(null);
   const [state, setState] = useState<UpState>("idle");
   const [pct, setPct] = useState(0);
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    if (!appWindow) return;
+
+    const apply = (m: boolean) => setMaximized(m);
+    appWindow.isMaximized().then(apply).catch(() => {});
+    const un = appWindow.onResized(() => appWindow.isMaximized().then(apply).catch(() => {}));
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  const toggleMaximize = () => appWindow?.toggleMaximize().catch(() => {});
 
   useEffect(() => {
     if (!isTauri) return;
@@ -124,6 +138,14 @@ export default function TitleBar() {
           className="grid h-9 w-11 place-items-center text-muted transition-colors hover:bg-ctrl-hover rounded-[8px] hover:text-text"
         >
           <i className="fa-solid fa-minus text-xs" />
+        </button>
+        <button
+          onClick={toggleMaximize}
+          aria-label={maximized ? "Восстановить" : "Развернуть"}
+          title={maximized ? "Восстановить" : "Развернуть"}
+          className="grid h-9 w-11 place-items-center text-muted transition-colors hover:bg-ctrl-hover rounded-[8px] hover:text-text"
+        >
+          <i className={`fa-regular ${maximized ? "fa-window-restore" : "fa-square"} text-[11px]`} />
         </button>
         <button
           onClick={() => appWindow?.close()}

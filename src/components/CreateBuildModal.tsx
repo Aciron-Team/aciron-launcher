@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import Modal from "./Modal";
+import Dropdown from "./Dropdown";
 import {
   createBuild,
   listVersions,
@@ -81,17 +83,41 @@ export default function CreateBuildModal({
   return (
     <Modal title="Новая сборка" icon="fa-cubes-stacked" onClose={onClose}>
       <div className="space-y-4 p-5">
-        <label className="block">
-          <span className="mb-1.5 block text-xs text-muted">Название</span>
-          <input
-            autoFocus
-            className={inputCls}
-            value={name}
-            placeholder="Моя сборка"
-            maxLength={40}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
+        {}
+        <div className="flex gap-4">
+          <button
+            onClick={pickImage}
+            title="Обложка"
+            className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-2xl border border-border bg-bg"
+          >
+            {imagePath ? (
+              <img src={convertFileSrc(imagePath)} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="grid h-full w-full place-items-center text-muted">
+                <i className="fa-solid fa-image text-xl" />
+              </span>
+            )}
+            <span className="absolute inset-0 grid place-items-center bg-black/55 opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="flex flex-col items-center gap-1 text-white">
+                <i className="fa-solid fa-camera" />
+                <span className="text-[10px] font-medium">Обложка</span>
+              </span>
+            </span>
+          </button>
+
+          <div className="flex min-w-0 flex-1 flex-col justify-center">
+            <label className="mb-1.5 block text-xs text-muted">Название сборки</label>
+            <input
+              autoFocus
+              className={inputCls}
+              value={name}
+              placeholder="Моя сборка"
+              maxLength={40}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <p className="mt-1.5 text-[11px] text-muted">Обложку можно поменять позже.</p>
+          </div>
+        </div>
 
         <div>
           <span className="mb-1.5 block text-xs text-muted">Ядро (загрузчик модов)</span>
@@ -143,31 +169,16 @@ export default function CreateBuildModal({
               Загрузка версий…
             </div>
           ) : (
-            <select
+            <Dropdown
               value={version}
-              onChange={(e) => setVersion(e.target.value)}
-              className={inputCls}
-            >
-              {versionOptions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.id}
-                  {v.type !== "release" ? ` (${v.type})` : ""}
-                </option>
-              ))}
-            </select>
+              onChange={setVersion}
+              placeholder="Выберите версию"
+              options={versionOptions.map((v) => ({
+                value: v.id,
+                label: v.id + (v.type !== "release" ? ` (${v.type})` : ""),
+              }))}
+            />
           )}
-        </div>
-
-        {}
-        <div>
-          <span className="mb-1.5 block text-xs text-muted">Обложка (необязательно)</span>
-          <button
-            onClick={pickImage}
-            className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-bg px-3 py-2.5 text-sm text-text transition-colors hover:border-accent/50"
-          >
-            <i className={`fa-solid ${imagePath ? "fa-circle-check text-accent" : "fa-image text-muted"}`} />
-            {imagePath ? "Обложка выбрана" : "Выбрать картинку"}
-          </button>
         </div>
 
         {error && (

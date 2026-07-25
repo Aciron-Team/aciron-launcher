@@ -36,6 +36,13 @@ body,
   overflow: hidden;
 }
 
+/* Развёрнутое окно (Windows maximize) — углы прямые, фон непрозрачный
+   (отступ-компенсация рамки заполняется фоном, а не прозрачностью). */
+html.win-maximized #root {
+  border-radius: 0;
+  background: var(--color-bg);
+}
+
 body {
   font-family: "Geologica Variable", system-ui, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -139,6 +146,47 @@ body {
 }
 .save-pop {
   animation: save-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---- анимации модальных окон ---- */
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.modal-backdrop {
+  animation: modal-backdrop-in 0.18s ease forwards;
+}
+.modal-panel {
+  animation: modal-panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* ---- лайтбокс галереи ---- */
+@keyframes lightbox-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.lightbox-img {
+  animation: lightbox-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ---- зелёный анимированный градиент прогресс-бара ---- */

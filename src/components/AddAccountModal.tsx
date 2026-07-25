@@ -1,11 +1,9 @@
 import { useState, type ReactNode } from "react";
 import Modal from "./Modal";
 import { addOfflineAccount, addMicrosoftAccount, openUrl, isTauri } from "../api";
-import { MicrosoftIcon, AcironIcon } from "./Icons";
+import { MicrosoftIcon } from "./Icons";
 
 type Step = "choose" | "offline" | "aciron" | "microsoft";
-
-type MsInfo = { user_code: string; verification_uri: string; expires_in: number };
 
 const inputCls =
   "w-full rounded-lg border border-border bg-bg px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-muted/60 focus:border-accent";
@@ -24,7 +22,7 @@ export default function AddAccountModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [msInfo, setMsInfo] = useState<MsInfo | null>(null);
+  const [authUrl, setAuthUrl] = useState("");
 
   const done = () => {
     onAdded();
@@ -33,10 +31,16 @@ export default function AddAccountModal({
 
   const submitOffline = async () => {
     setError("");
-    if (!name.trim()) return setError("Введите ник");
+    const nick = name.trim();
+
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(nick)) {
+      return setError(
+        "Ник: 3–16 символов, только латиница, цифры и _ (без пробелов, кириллицы и эмодзи)"
+      );
+    }
     setBusy(true);
     try {
-      await addOfflineAccount(name.trim());
+      await addOfflineAccount(nick);
       done();
     } catch (e) {
       setError(String(e));
@@ -54,15 +58,18 @@ export default function AddAccountModal({
   const startMicrosoft = async () => {
     setStep("microsoft");
     setError("");
-    setMsInfo(null);
+    setAuthUrl("");
     setBusy(true);
 
     let unlisten: (() => void) | undefined;
     if (isTauri) {
       const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<MsInfo>("ms-device-code", (e) => setMsInfo(e.payload));
+      unlisten = await listen<{ url: string }>("ms-auth-open", (e) => {
+        setAuthUrl(e.payload.url);
+        openUrl(e.payload.url);
+      });
     } else {
-      setMsInfo({ user_code: "ABCD-EFGH", verification_uri: "https://microsoft.com/link", expires_in: 900 });
+      setAuthUrl("https://login.microsoftonline.com/");
     }
 
     try {
@@ -80,7 +87,7 @@ export default function AddAccountModal({
     step === "offline"
       ? "Пиратский аккаунт"
       : step === "aciron"
-      ? "Вход в Aciron"
+      ? "Вход в Aciron ID"
       : step === "microsoft"
       ? "Вход через Microsoft"
       : "Добавить аккаунт";
@@ -92,23 +99,23 @@ export default function AddAccountModal({
           <div className="space-y-2.5">
             <TypeButton
               icon="fa-user-secret"
-              iconBg="bg-accent/15 text-accent"
+              iconBg="bg-bg text-accent"
               title="Пиратский аккаунт"
-              desc="Оффлайн, любой ник — без авторизации"
+              desc="Оффлайн аккаунт"
               onClick={() => setStep("offline")}
             />
             <TypeButton
               node={<MicrosoftIcon size={22} />}
-              iconBg="bg-bg"
+              iconBg="bg-bg fill-accent"
               title="Лицензия (Microsoft)"
               desc="Официальный вход через аккаунт Microsoft"
               onClick={startMicrosoft}
             />
             <TypeButton
-              node={<AcironIcon size={26} />}
-              iconBg="bg-bg"
+              node={<i className="fa-solid fa-key"></i>}
+              iconBg="bg-bg text-accent"
               title="Аккаунт Aciron"
-              desc="Единый аккаунт Aciron — вход по email"
+              desc="Единый аккаунт Aciron ID"
               onClick={() => {
                 setNotice("");
                 setError("");
@@ -128,7 +135,7 @@ export default function AddAccountModal({
                 value={name}
                 placeholder="Player"
                 maxLength={16}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => setName(e.target.value.replace(/[^A-Za-z0-9_]/g, ""))}
                 onKeyDown={(e) => e.key === "Enter" && submitOffline()}
               />
             </label>
@@ -142,40 +149,36 @@ export default function AddAccountModal({
 
         {step === "microsoft" && (
           <div className="space-y-4">
-            {!msInfo && !error && (
+            {!authUrl && !error && (
               <div className="flex flex-col items-center gap-3 py-6 text-muted">
                 <i className="fa-solid fa-spinner fa-spin text-2xl" />
-                <span className="text-sm">Получение кода входа…</span>
+                <span className="text-sm">Открываем вход Microsoft…</span>
               </div>
             )}
 
-            {msInfo && !error && (
+            {authUrl && !error && (
               <>
-                <p className="text-sm text-muted">
-                  Откройте страницу входа Microsoft и введите этот код:
-                </p>
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg px-4 py-3">
-                  <span className="select-all font-mono text-2xl font-bold tracking-[0.2em] text-accent">
-                    {msInfo.user_code}
-                  </span>
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(msInfo.user_code)}
-                    title="Скопировать код"
-                    className="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted transition-colors hover:text-accent"
-                  >
-                    <i className="fa-solid fa-copy" />
-                  </button>
+                <div className="flex flex-col items-center gap-3 py-2 text-center">
+                  <div className="grid h-14 w-14 place-items-center rounded-2xl bg-accent/15 text-accent">
+                    <i className="fa-brands fa-microsoft text-2xl" />
+                  </div>
+                  <p className="text-sm text-text">
+                    Мы открыли вход Microsoft в браузере.
+                  </p>
+                  <p className="text-xs text-muted">
+                    Войдите там — окно закроется, а вход завершится здесь автоматически.
+                  </p>
                 </div>
                 <button
-                  onClick={() => openUrl(msInfo.verification_uri)}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
+                  onClick={() => openUrl(authUrl)}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg px-5 py-2.5 text-sm font-medium text-text transition-colors hover:border-accent/50"
                 >
                   <i className="fa-solid fa-arrow-up-right-from-square" />
-                  Открыть страницу входа
+                  Браузер не открылся? Открыть вручную
                 </button>
                 <div className="flex items-center justify-center gap-2 text-xs text-muted">
                   <i className="fa-solid fa-spinner fa-spin" />
-                  Ожидание подтверждения входа…
+                  Ожидание входа…
                 </div>
               </>
             )}
@@ -186,7 +189,7 @@ export default function AddAccountModal({
               <BackBtn
                 onClick={() => {
                   setError("");
-                  setMsInfo(null);
+                  setAuthUrl("");
                   setStep("choose");
                 }}
               />

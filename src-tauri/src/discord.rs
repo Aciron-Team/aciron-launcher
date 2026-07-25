@@ -14,7 +14,7 @@ const DOWNLOAD_URL: &str = "https://aciron.pro";
 enum State {
     Idle,
     Version(String),
-    Build { name: String, image: Option<String> },
+    Build { name: String },
 }
 
 fn slot() -> &'static Mutex<Option<DiscordIpcClient>> {
@@ -81,7 +81,7 @@ pub fn set_enabled(on: bool) {
         match st {
             State::Idle => set_idle(),
             State::Version(v) => set_version(&v),
-            State::Build { name, image } => set_build(&name, image.as_deref()),
+            State::Build { name } => set_build(&name),
         }
     } else if let Ok(mut g) = slot().lock() {
         if let Some(c) = g.as_mut() {
@@ -148,36 +148,25 @@ pub fn set_version(version: &str) {
     );
 }
 
-/// «Играет в <сборка>». Есть URL обложки модпака → показываем её КРУПНО
-/// (large image), логотип уходит в угол; иначе — логотип + grass, как раньше.
-pub fn set_build(name: &str, cover: Option<&str>) {
+/// «Играет в <сборка>» — логотип + трава (обложку по названию не ищем).
+pub fn set_build(name: &str) {
     if let Ok(mut s) = last_state().lock() {
-        *s = State::Build {
-            name: name.to_string(),
-            image: cover.map(|s| s.to_string()),
-        };
+        *s = State::Build { name: name.to_string() };
     }
     if !configured() || !enabled() {
         return;
     }
-    let cover = cover.filter(|s| s.starts_with("http"));
-    let assets = match cover {
-        Some(url) => Assets::new()
-            .large_image(url)
-            .large_text(name)
-            .small_image("logo")
-            .small_text("Aciron Launcher"),
-        None => Assets::new()
-            .large_image("logo")
-            .large_text("Aciron Launcher")
-            .small_image("grass")
-            .small_text(name),
-    };
     apply(
         Activity::new()
             .details(&format!("Играет в {name}"))
             .state("Сборка Minecraft")
-            .assets(assets)
+            .assets(
+                Assets::new()
+                    .large_image("logo")
+                    .large_text("Aciron Launcher")
+                    .small_image("grass")
+                    .small_text(name),
+            )
             .timestamps(Timestamps::new().start(now()))
             .buttons(download_button()),
     );

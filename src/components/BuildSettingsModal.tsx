@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Modal from "./Modal";
+import BuildCover from "./BuildCover";
+import Dropdown from "./Dropdown";
 import {
   listVersions,
   changeBuildVersion,
+  renameBuild,
   setBuildImage,
   pickFile,
   type Build,
@@ -32,6 +35,7 @@ export default function BuildSettingsModal({
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [version, setVersion] = useState(build.mc_version);
+  const [name, setName] = useState(build.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
@@ -44,7 +48,6 @@ export default function BuildSettingsModal({
 
   const options = useMemo(() => {
     const list = (versions ?? []).filter((v) => showSnapshots || v.type === "release");
-
     if (!list.some((v) => v.id === build.mc_version)) {
       list.unshift({ id: build.mc_version, type: "release", release_time: "" });
     }
@@ -63,22 +66,33 @@ export default function BuildSettingsModal({
     }
   };
 
+  const nameChanged = name.trim() !== "" && name.trim() !== build.name;
+  const versionChanged = version !== build.mc_version;
+
   const apply = async () => {
     setError("");
-    if (version === build.mc_version) {
+    if (!nameChanged && !versionChanged) {
       onClose();
       return;
     }
     setBusy(true);
     try {
-      const updated = await changeBuildVersion(build.id, version);
-      onUpdated(updated);
-      const off = updated.mods.filter((m) => !m.enabled).length;
-      toast(
-        `Версия изменена на ${version}` +
-          (off ? ` · ${off} мод(ов) выключено (нет под эту версию)` : ""),
-        "success"
-      );
+      if (nameChanged) {
+        const upd = await renameBuild(build.id, name.trim());
+        onUpdated(upd);
+      }
+      if (versionChanged) {
+        const upd = await changeBuildVersion(build.id, version);
+        onUpdated(upd);
+        const off = upd.mods.filter((m) => !m.enabled).length;
+        toast(
+          `Версия изменена на ${version}` +
+            (off ? ` · ${off} мод(ов) выключено (нет под эту версию)` : ""),
+          "success"
+        );
+      } else if (nameChanged) {
+        toast("Сохранено", "success");
+      }
       onClose();
     } catch (e) {
       setError(String(e));
@@ -89,23 +103,41 @@ export default function BuildSettingsModal({
   };
 
   return (
-    <Modal title="Настройка сборки" icon="fa-gear" onClose={onClose}>
-      <div className="space-y-4 p-5">
-        <div className="text-xs text-muted">
-          Ядро: <span className="text-text">{loaderLabel[build.loader] ?? build.loader}</span>{" "}
-          (менять нельзя)
-        </div>
-
+    <Modal
+      title="Настройка сборки"
+      subtitle={`${loaderLabel[build.loader] ?? build.loader} · ядро менять нельзя`}
+      icon="fa-gear"
+      onClose={onClose}
+    >
+      <div className="space-y-5 p-5">
         {}
-        <div>
-          <span className="mb-1.5 block text-xs text-muted">Обложка</span>
+        <div className="flex gap-4">
           <button
             onClick={changeCover}
-            className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-bg px-3 py-2.5 text-sm text-text transition-colors hover:border-accent/50"
+            title="Изменить обложку"
+            className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-2xl border border-border"
           >
-            <i className="fa-solid fa-image text-muted" />
-            {build.image ? "Изменить обложку" : "Поставить обложку"}
+            <BuildCover build={build} className="h-24 w-24" />
+            <span className="absolute inset-0 grid place-items-center bg-black/55 opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="flex flex-col items-center gap-1 text-white">
+                <i className="fa-solid fa-camera" />
+                <span className="text-[10px] font-medium">Обложка</span>
+              </span>
+            </span>
           </button>
+
+          <div className="flex min-w-0 flex-1 flex-col justify-center">
+            <label className="mb-1.5 block text-xs text-muted">Название сборки</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && apply()}
+              maxLength={60}
+              placeholder="Моя сборка"
+              className={inputCls}
+            />
+            <p className="mt-1.5 text-[11px] text-muted">Папка сборки на диске не изменится.</p>
+          </div>
         </div>
 
         {}
@@ -128,16 +160,16 @@ export default function BuildSettingsModal({
               Загрузка версий…
             </div>
           ) : (
-            <select value={version} onChange={(e) => setVersion(e.target.value)} className={inputCls}>
-              {options.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.id}
-                  {v.type !== "release" ? ` (${v.type})` : ""}
-                </option>
-              ))}
-            </select>
+            <Dropdown
+              value={version}
+              onChange={setVersion}
+              options={options.map((v) => ({
+                value: v.id,
+                label: v.id + (v.type !== "release" ? ` (${v.type})` : ""),
+              }))}
+            />
           )}
-          {version !== build.mc_version && (
+          {versionChanged && (
             <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted">
               <i className="fa-solid fa-circle-info mt-0.5 text-accent" />
               Моды будут пере-подобраны под {version}; те, которых под неё нет, — выключены.
@@ -165,7 +197,7 @@ export default function BuildSettingsModal({
             className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active disabled:opacity-60"
           >
             {busy && <i className="fa-solid fa-spinner fa-spin" />}
-            {busy ? "Обновление модов…" : "Применить"}
+            {busy ? "Сохранение…" : "Сохранить"}
           </button>
         </div>
       </div>

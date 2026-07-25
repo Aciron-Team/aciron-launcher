@@ -125,6 +125,44 @@ export async function checkUpdate(): Promise<UpdateInfo> {
   }
 }
 
+export type ServerStatus = {
+  online: boolean;
+  players_online: number;
+  players_max: number;
+  motd: string;
+  version: string;
+  icon: string;
+};
+
+const STATUS_TTL = 60_000;
+const statusCache = new Map<string, { at: number; data: ServerStatus }>();
+
+export function cachedServerStatus(address: string): ServerStatus | null {
+  return statusCache.get(address)?.data ?? null;
+}
+
+export async function serverStatus(address: string, force = false): Promise<ServerStatus> {
+  const empty: ServerStatus = {
+    online: false,
+    players_online: 0,
+    players_max: 0,
+    motd: "",
+    version: "",
+    icon: "",
+  };
+  const cached = statusCache.get(address);
+  if (!force && cached && Date.now() - cached.at < STATUS_TTL) return cached.data;
+  if (!isTauri) return cached?.data ?? empty;
+  try {
+    const data = await invoke<ServerStatus>("server_status", { address });
+    statusCache.set(address, { at: Date.now(), data });
+    return data;
+  } catch {
+
+    return cached?.data ?? empty;
+  }
+}
+
 export type AccountType = "offline" | "microsoft";
 
 export type Account = {
@@ -262,6 +300,7 @@ export type Build = {
   dir: string;
   image: string;
   icon_url: string;
+  playtime_secs: number;
 };
 
 export async function getBuilds(): Promise<Build[]> {
@@ -271,7 +310,7 @@ export async function getBuilds(): Promise<Build[]> {
 
 export async function createBuild(name: string, mc_version: string, loader: Loader): Promise<Build> {
   if (!isTauri) {
-    return { id: String(Date.now()), name, mc_version, loader, loader_version: "", mods: [], created: Date.now() / 1000, dir: "", image: "", icon_url: "" };
+    return { id: String(Date.now()), name, mc_version, loader, loader_version: "", mods: [], created: Date.now() / 1000, dir: "", image: "", icon_url: "", playtime_secs: 0 };
   }
   return invoke<Build>("create_build", { name, mcVersion: mc_version, loader });
 }
@@ -289,6 +328,11 @@ export async function getBuildImage(build_id: string): Promise<string | null> {
 export async function changeBuildVersion(build_id: string, mc_version: string): Promise<Build> {
   if (!isTauri) throw new Error("нет бэкенда");
   return invoke<Build>("change_build_version", { buildId: build_id, mcVersion: mc_version });
+}
+
+export async function renameBuild(build_id: string, name: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("rename_build", { buildId: build_id, name });
 }
 
 export async function deleteBuild(id: string): Promise<void> {
@@ -383,6 +427,7 @@ export type ModProject = {
   issues_url?: string;
   wiki_url?: string;
   discord_url?: string;
+  website_url?: string;
 };
 
 export async function modrinthProject(project_id: string): Promise<ModProject> {
@@ -416,4 +461,150 @@ export async function modrinthInstallVersion(
     projectId: project_id,
     versionId: version_id,
   });
+}
+
+export async function curseforgeSearch(
+  query: string,
+  loader: string,
+  game_version: string,
+  categories: string[],
+  index: string,
+  offset: number,
+  limit: number,
+  project_type = "mod"
+): Promise<ModSearch> {
+  if (!isTauri) return { hits: [], total_hits: 0, offset: 0, limit };
+  return invoke<ModSearch>("curseforge_search", {
+    query,
+    loader,
+    gameVersion: game_version,
+    categories,
+    index,
+    offset,
+    limit,
+    projectType: project_type,
+  });
+}
+
+export async function curseforgeCategories(): Promise<string[]> {
+  if (!isTauri) return [];
+  return invoke<string[]>("curseforge_categories");
+}
+
+export async function curseforgeInstall(build_id: string, project_id: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("curseforge_install", { buildId: build_id, projectId: project_id });
+}
+
+export async function curseforgeProject(project_id: string): Promise<ModProject> {
+  return invoke<ModProject>("curseforge_project", { projectId: project_id });
+}
+
+export async function curseforgeProjectVersions(project_id: string): Promise<ModVersion[]> {
+  if (!isTauri) return [];
+  return invoke<ModVersion[]>("curseforge_project_versions", { projectId: project_id });
+}
+
+export async function curseforgeInstallVersion(
+  build_id: string,
+  project_id: string,
+  version_id: string
+): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("curseforge_install_version", {
+    buildId: build_id,
+    projectId: project_id,
+    versionId: version_id,
+  });
+}
+
+export async function curseforgeInstallModpack(project_id: string, version_id?: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("curseforge_install_modpack", {
+    projectId: project_id,
+    versionId: version_id ?? null,
+  });
+}
+
+export async function ftbSearch(query: string, offset: number, limit: number): Promise<ModSearch> {
+  if (!isTauri) return { hits: [], total_hits: 0, offset: 0, limit };
+  return invoke<ModSearch>("ftb_search", { query, offset, limit });
+}
+
+export async function ftbProject(project_id: string): Promise<ModProject> {
+  return invoke<ModProject>("ftb_project", { projectId: project_id });
+}
+
+export async function ftbProjectVersions(project_id: string): Promise<ModVersion[]> {
+  if (!isTauri) return [];
+  return invoke<ModVersion[]>("ftb_project_versions", { projectId: project_id });
+}
+
+export async function ftbInstallModpack(project_id: string, version_id?: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("ftb_install_modpack", {
+    projectId: project_id,
+    versionId: version_id ?? null,
+  });
+}
+
+export type SourceId = "modrinth" | "curseforge" | "ftb";
+
+export function searchContent(
+  source: SourceId,
+  query: string,
+  loader: string,
+  game_version: string,
+  categories: string[],
+  index: string,
+  offset: number,
+  limit: number,
+  project_type = "mod"
+): Promise<ModSearch> {
+  if (source === "ftb") return ftbSearch(query, offset, limit);
+  return source === "curseforge"
+    ? curseforgeSearch(query, loader, game_version, categories, index, offset, limit, project_type)
+    : modrinthSearch(query, loader, game_version, categories, index, offset, limit, project_type);
+}
+
+export function contentCategories(source: SourceId): Promise<string[]> {
+  return source === "curseforge" ? curseforgeCategories() : modrinthCategories();
+}
+
+export function installContent(source: SourceId, build_id: string, project_id: string): Promise<Build> {
+  return source === "curseforge"
+    ? curseforgeInstall(build_id, project_id)
+    : modrinthInstall(build_id, project_id);
+}
+
+export function contentProject(source: SourceId, project_id: string): Promise<ModProject> {
+  if (source === "ftb") return ftbProject(project_id);
+  return source === "curseforge" ? curseforgeProject(project_id) : modrinthProject(project_id);
+}
+
+export function contentVersions(source: SourceId, project_id: string): Promise<ModVersion[]> {
+  if (source === "ftb") return ftbProjectVersions(project_id);
+  return source === "curseforge" ? curseforgeProjectVersions(project_id) : projectVersions(project_id);
+}
+
+export function installModpackContent(
+  source: SourceId,
+  project_id: string,
+  version_id?: string
+): Promise<Build> {
+  if (source === "ftb") return ftbInstallModpack(project_id, version_id);
+  return source === "curseforge"
+    ? curseforgeInstallModpack(project_id, version_id)
+    : installModpack(project_id, version_id);
+}
+
+export function installContentVersion(
+  source: SourceId,
+  build_id: string,
+  project_id: string,
+  version_id: string
+): Promise<Build> {
+  return source === "curseforge"
+    ? curseforgeInstallVersion(build_id, project_id, version_id)
+    : modrinthInstallVersion(build_id, project_id, version_id);
 }

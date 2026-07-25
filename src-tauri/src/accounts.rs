@@ -99,8 +99,11 @@ pub fn get_accounts() -> serde_json::Value {
 #[tauri::command]
 pub fn add_offline_account(username: String) -> Result<Account, String> {
     let username = username.trim().to_string();
-    if username.is_empty() {
-        return Err("Введите ник".into());
+
+    let valid = (3..=16).contains(&username.chars().count())
+        && username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !valid {
+        return Err("Ник: 3–16 символов, только латиница, цифры и _".into());
     }
     let mut store = load();
     let acc = Account {

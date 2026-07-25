@@ -203,7 +203,7 @@ fn log_tail(path: &Path, max: usize) -> String {
     String::from_utf8_lossy(&data[start..]).trim().to_string()
 }
 
-async fn get_json(client: &reqwest::Client, url: &str) -> Result<Value, String> {
+pub(crate) async fn get_json(client: &reqwest::Client, url: &str) -> Result<Value, String> {
     client
         .get(url)
         .send()
@@ -215,7 +215,7 @@ async fn get_json(client: &reqwest::Client, url: &str) -> Result<Value, String> 
 }
 
 /// Скачивает файл, если его ещё нет.
-async fn download_file(client: &reqwest::Client, url: &str, path: &Path) -> Result<(), String> {
+pub(crate) async fn download_file(client: &reqwest::Client, url: &str, path: &Path) -> Result<(), String> {
     if path.exists() {
         return Ok(());
     }
@@ -278,7 +278,7 @@ pub fn offline_uuid(name: &str) -> String {
 /// Ключ библиотеки group:artifact (без версии/классификатора) — для дедупликации.
 /// Пустой classifier для нативов оставляет тот же ключ, поэтому натив-классификаторы
 /// исключаем на стороне вызова.
-fn artifact_key(name: &str) -> String {
+pub(crate) fn artifact_key(name: &str) -> String {
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() >= 2 {
         format!("{}:{}", parts[0], parts[1])
@@ -288,7 +288,7 @@ fn artifact_key(name: &str) -> String {
 }
 
 /// maven-координата (group:artifact:version[:classifier]) → относительный путь к jar.
-fn maven_path(name: &str) -> Option<String> {
+pub(crate) fn maven_path(name: &str) -> Option<String> {
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 3 {
         return None;
@@ -337,6 +337,8 @@ async fn prepare_and_launch(
     version: &str,
     game_dir_override: Option<PathBuf>,
     loader: Option<&str>,
+    server: Option<&str>,
+    build_id: Option<String>,
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent("AcironLauncher/0.1")
@@ -460,35 +462,82 @@ async fn prepare_and_launch(
         extract_natives(jar, &natives_dir)?;
     }
 
-    // 4b) Загрузчик модов (Fabric/Quilt): библиотеки + mainClass + JVM-аргументы.
+    // Java нужна ДО загрузчика: установщик Forge/NeoForge запускается через неё.
+    let component = version_json["javaVersion"]["component"]
+        .as_str()
+        .unwrap_or("jre-legacy")
+        .to_string();
+    let java = match ensure_java_runtime(app, &client, &component, &root).await {
+        Some(j) => j,
+        None => {
+            let p = PathBuf::from(&settings.java_path);
+            let jw = p.with_file_name(if cfg!(windows) { "javaw.exe" } else { "java" });
+            let chosen = if jw.exists() { jw } else { p };
+            if !chosen.exists() {
+                return Err(format!(
+                    "Не удалось получить Java {component}, и системная Java не найдена: {}",
+                    chosen.to_string_lossy()
+                ));
+            }
+            chosen
+        }
+    };
+
+    // 4b) Загрузчик модов: библиотеки + mainClass + JVM/игровые аргументы.
     let mut loader_main_class: Option<String> = None;
     let mut loader_jvm_args: Vec<String> = Vec::new();
+    let mut loader_game_args: Vec<String> = Vec::new();
     if let Some(loader) = loader {
         emit(app, "loader", "Загрузка загрузчика модов", 0, 1);
-        let profile = fetch_loader_profile(&client, loader, version).await?;
-        if let Some(libs) = profile["libraries"].as_array() {
-            for lib in libs {
-                if let (Some(name), Some(url)) = (lib["name"].as_str(), lib["url"].as_str()) {
-                    if let Some(path) = maven_path(name) {
-                        let full_url = format!("{}/{}", url.trim_end_matches('/'), path);
-                        let dest = libraries_dir.join(&path);
-                        download_file(&client, &full_url, &dest).await?;
-                        // библиотека загрузчика перекрывает ванильную того же артефакта
-                        let key = artifact_key(name);
-                        classpath.retain(|(k, _)| k.is_empty() || k != &key);
-                        classpath.push((key, dest));
+        match loader {
+            "fabric" | "quilt" => {
+                let profile = fetch_loader_profile(&client, loader, version).await?;
+                if let Some(libs) = profile["libraries"].as_array() {
+                    for lib in libs {
+                        if let (Some(name), Some(url)) = (lib["name"].as_str(), lib["url"].as_str()) {
+                            if let Some(path) = maven_path(name) {
+                                let full_url = format!("{}/{}", url.trim_end_matches('/'), path);
+                                let dest = libraries_dir.join(&path);
+                                download_file(&client, &full_url, &dest).await?;
+                                let key = artifact_key(name);
+                                classpath.retain(|(k, _)| k.is_empty() || k != &key);
+                                classpath.push((key, dest));
+                            }
+                        }
+                    }
+                }
+                loader_main_class = profile["mainClass"].as_str().map(|s| s.to_string());
+                // Fabric требует -DFabricMcEmu, иначе не стартует.
+                if let Some(jvm) = profile["arguments"]["jvm"].as_array() {
+                    for a in jvm {
+                        if let Some(s) = a.as_str() {
+                            loader_jvm_args.push(s.to_string());
+                        }
                     }
                 }
             }
-        }
-        loader_main_class = profile["mainClass"].as_str().map(|s| s.to_string());
-        // JVM-аргументы загрузчика (Fabric требует -DFabricMcEmu, иначе не стартует).
-        if let Some(jvm) = profile["arguments"]["jvm"].as_array() {
-            for a in jvm {
-                if let Some(s) = a.as_str() {
-                    loader_jvm_args.push(s.to_string());
+            "forge" | "neoforge" => {
+                let profile = crate::forge::install(
+                    &client,
+                    loader,
+                    version,
+                    &root,
+                    &libraries_dir,
+                    &java,
+                    app,
+                )
+                .await?;
+                for (key, dest) in profile.libraries {
+                    classpath.retain(|(k, _)| k.is_empty() || k != &key);
+                    classpath.push((key, dest));
                 }
+                if !profile.main_class.is_empty() {
+                    loader_main_class = Some(profile.main_class);
+                }
+                loader_jvm_args = profile.jvm_args;
+                loader_game_args = profile.game_args;
             }
+            other => return Err(format!("Загрузчик {other} не поддерживается")),
         }
         emit(app, "loader", "Загрузчик модов готов", 1, 1);
     }
@@ -599,27 +648,23 @@ async fn prepare_and_launch(
         settings.window_height.to_string(),
     ]);
 
-    // Java: сначала пробуем среду, которую требует версия игры (Mojang java-runtime),
-    // иначе откатываемся на системную java из настроек.
-    let component = version_json["javaVersion"]["component"]
-        .as_str()
-        .unwrap_or("jre-legacy")
-        .to_string();
-    let java = match ensure_java_runtime(app, &client, &component, &root).await {
-        Some(j) => j,
-        None => {
-            let p = PathBuf::from(&settings.java_path);
-            let jw = p.with_file_name(if cfg!(windows) { "javaw.exe" } else { "java" });
-            let chosen = if jw.exists() { jw } else { p };
-            if !chosen.exists() {
-                return Err(format!(
-                    "Не удалось получить Java {component}, и системная Java не найдена: {}",
-                    chosen.to_string_lossy()
-                ));
-            }
-            chosen
+    // Игровые аргументы загрузчика (Forge: --launchTarget, --fml.*; 1.12.2: --tweakClass).
+    args.extend(loader_game_args);
+
+    // Кнопка «Подключиться» на странице серверов: заходим сразу на сервер.
+    // 1.20+ — новый --quickPlayMultiplayer, старее — классические --server/--port.
+    if let Some(addr) = server.filter(|s| !s.is_empty()) {
+        let (host, port) = split_host_port(addr);
+        if version_ge_1_20(version) {
+            args.push("--quickPlayMultiplayer".into());
+            args.push(format!("{host}:{port}"));
+        } else {
+            args.push("--server".into());
+            args.push(host);
+            args.push("--port".into());
+            args.push(port.to_string());
         }
-    };
+    }
 
     emit(app, "launch", "Запуск игры", 1, 1);
 
@@ -654,6 +699,7 @@ async fn prepare_and_launch(
 
     let app2 = app.clone();
     let started = std::time::Instant::now();
+    let track_build = build_id.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(700));
         let mut slot = match game_slot().lock() {
@@ -676,6 +722,9 @@ async fn prepare_and_launch(
                         };
                         emit(&app2, "error", &msg, 0, 1);
                     }
+                    if let Some(bid) = &track_build {
+                        crate::builds::add_playtime(bid, started.elapsed().as_secs());
+                    }
                     crate::discord::set_idle();
                     let _ = app2.emit("game-exited", ());
                     break;
@@ -683,6 +732,9 @@ async fn prepare_and_launch(
                 Err(_) => {
                     *slot = None;
                     drop(slot);
+                    if let Some(bid) = &track_build {
+                        crate::builds::add_playtime(bid, started.elapsed().as_secs());
+                    }
                     crate::discord::set_idle();
                     let _ = app2.emit("game-exited", ());
                     break;
@@ -740,6 +792,22 @@ async fn resolve_identity(settings: &Settings) -> Result<Identity, String> {
 }
 
 /// Имя и адрес тестового сервера, который добавляется в список серверов игры.
+/// Разбирает "host" или "host:port" (по умолчанию 25565).
+fn split_host_port(addr: &str) -> (String, u16) {
+    match addr.rsplit_once(':') {
+        Some((h, p)) if !h.is_empty() => (h.to_string(), p.parse().unwrap_or(25565)),
+        _ => (addr.to_string(), 25565),
+    }
+}
+
+/// Версия игры >= 1.20 (для выбора флага быстрого подключения к серверу).
+fn version_ge_1_20(version: &str) -> bool {
+    let mut it = version.split(|c| c == '.' || c == '-');
+    let major = it.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    let minor = it.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    major > 1 || (major == 1 && minor >= 20)
+}
+
 const TEST_SERVER_NAME: &str = "Aciron — тестовый сервер";
 const TEST_SERVER_IP: &str = "mc.aciron.pro";
 
@@ -867,6 +935,11 @@ pub fn get_installed_versions() -> Vec<InstalledVersion> {
                 continue;
             }
             let id = entry.file_name().to_string_lossy().to_string();
+
+            let idl = id.to_lowercase();
+            if idl.contains("forge") || idl.contains("fabric") || idl.contains("quilt") {
+                continue;
+            }
             let json = path.join(format!("{id}.json"));
             if !json.exists() || list.iter().any(|v| v.id == id) {
                 continue;
@@ -936,9 +1009,13 @@ pub async fn list_versions() -> Result<Vec<VersionInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn launch_game(app: AppHandle, version: String) -> Result<(), String> {
+pub async fn launch_game(
+    app: AppHandle,
+    version: String,
+    server: Option<String>,
+) -> Result<(), String> {
     let settings = settings::load_settings();
-    let res = prepare_and_launch(&app, &settings, &version, None, None).await;
+    let res = prepare_and_launch(&app, &settings, &version, None, None, server.as_deref(), None).await;
     match &res {
         Ok(_) => {
 
@@ -952,13 +1029,11 @@ pub async fn launch_game(app: AppHandle, version: String) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn launch_build(app: AppHandle, build_id: String) -> Result<(), String> {
-    let mut build = crate::builds::get_build(&build_id).ok_or("Сборка не найдена")?;
+    let build = crate::builds::get_build(&build_id).ok_or("Сборка не найдена")?;
     let loader = match build.loader.as_str() {
-        "fabric" | "quilt" => build.loader.clone(),
+        "fabric" | "quilt" | "forge" | "neoforge" => build.loader.clone(),
         other => {
-            let msg = format!(
-                "Запуск сборок на {other} пока в разработке. Сейчас работают Fabric и Quilt."
-            );
+            let msg = format!("Загрузчик {other} не поддерживается");
             emit(&app, "error", &msg, 0, 1);
             return Err(msg);
         }
@@ -972,25 +1047,14 @@ pub async fn launch_build(app: AppHandle, build_id: String) -> Result<(), String
         &build.mc_version,
         Some(game_dir),
         Some(&loader),
+        None,
+        Some(build_id.clone()),
     )
     .await;
     match &res {
         Ok(_) => {
 
-            if build.icon_url.is_empty() {
-                if let Some(url) =
-                    crate::modrinth::resolve_cover(&build.source_id, &build.name).await
-                {
-                    build.icon_url = url;
-                    let _ = crate::builds::upsert_build(build.clone());
-                }
-            }
-            let cover = if build.icon_url.is_empty() {
-                None
-            } else {
-                Some(build.icon_url.as_str())
-            };
-            crate::discord::set_build(&build.name, cover);
+            crate::discord::set_build(&build.name);
         }
         Err(e) => emit(&app, "error", e, 0, 1),
     }

@@ -1,9 +1,13 @@
 mod accounts;
 mod builds;
+mod curseforge;
 mod discord;
+mod forge;
+mod ftb;
 mod launcher;
 mod microsoft;
 mod modrinth;
+mod servers;
 mod settings;
 mod update;
 
@@ -42,6 +46,7 @@ pub fn run() {
             builds::create_build,
             builds::delete_build,
             builds::open_build_folder,
+            builds::rename_build,
             builds::remove_mod,
             builds::toggle_mod,
             builds::refresh_build_content,
@@ -55,6 +60,18 @@ pub fn run() {
             modrinth::project_versions,
             modrinth::change_build_version,
             modrinth::install_modpack,
+            curseforge::curseforge_search,
+            curseforge::curseforge_categories,
+            curseforge::curseforge_project,
+            curseforge::curseforge_project_versions,
+            curseforge::curseforge_install,
+            curseforge::curseforge_install_version,
+            curseforge::curseforge_install_modpack,
+            ftb::ftb_search,
+            ftb::ftb_project,
+            ftb::ftb_project_versions,
+            ftb::ftb_install_modpack,
+            servers::server_status,
             update::check_update,
         ])
         .run(tauri::generate_context!())

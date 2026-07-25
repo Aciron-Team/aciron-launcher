@@ -2,7 +2,7 @@
 name = "aciron-launcher"
 version = "0.1.0"
 description = "Aciron Minecraft Launcher"
-authors = ["you"]
+authors = ["acizecu"]
 edition = "2021"
 
 [lib]
@@ -27,4 +27,6 @@ futures = "0.3"
 zip = "2"
 md5 = "0.7"
 base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
 discord-rich-presence = "0.2"

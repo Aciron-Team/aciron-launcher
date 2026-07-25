@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { modrinthSearch, openUrl, type ModHit } from "../api";
-import SourceMenu, { SourceComingSoon, type Source } from "./SourceMenu";
-import VersionPickerModal from "./VersionPickerModal";
+import { searchContent, openUrl, type ModHit } from "../api";
+import SourceMenu, { type Source } from "./SourceMenu";
+import Dropdown from "./Dropdown";
+import ModpackDetail from "./ModpackDetail";
+
+function packUrl(source: Source, h: ModHit): string {
+  if (source === "curseforge") return `https://www.curseforge.com/minecraft/modpacks/${h.slug}`;
+  if (source === "ftb") return `https://www.feed-the-beast.com/modpacks/${h.slug}`;
+  return `https://modrinth.com/modpack/${h.slug}`;
+}
 
 const PER_PAGE = 25;
 const SORTS = [
@@ -28,14 +35,14 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [picker, setPicker] = useState<ModHit | null>(null);
+  const [detail, setDetail] = useState<ModHit | null>(null);
   const seq = useRef(0);
 
   useEffect(() => {
     const my = ++seq.current;
     setLoading(true);
     setError("");
-    modrinthSearch(applied, "", "", [], index, page * PER_PAGE, PER_PAGE, "modpack")
+    searchContent(source, applied, "", "", [], index, page * PER_PAGE, PER_PAGE, "modpack")
       .then((r) => {
         if (my !== seq.current) return;
         setHits(r.hits);
@@ -43,11 +50,18 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
       })
       .catch((e) => my === seq.current && setError(String(e)))
       .finally(() => my === seq.current && setLoading(false));
-  }, [applied, index, page]);
+  }, [source, applied, index, page]);
 
   const doSearch = () => {
     setPage(0);
     setApplied(query);
+  };
+
+  const pickSource = (s: Source) => {
+    setSource(s);
+    setPage(0);
+    setApplied("");
+    setQuery("");
   };
 
   const totalPages = Math.min(Math.ceil(total / PER_PAGE), 100);
@@ -56,8 +70,19 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
     (p) => p < totalPages
   );
 
+  if (detail) {
+    return (
+      <ModpackDetail
+        pack={detail}
+        source={source}
+        onBack={() => setDetail(null)}
+        onInstalled={onInstalled}
+      />
+    );
+  }
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
         <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-bg px-3">
           <i className="fa-solid fa-magnifying-glass text-xs text-muted" />
@@ -67,38 +92,30 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doSearch()}
-            disabled={source !== "modrinth"}
           />
         </div>
         <button
           onClick={doSearch}
-          disabled={source !== "modrinth"}
           className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg transition-colors hover:bg-accent-hover disabled:opacity-50"
         >
           <i className="fa-solid fa-magnifying-glass text-xs" />
           Поиск
         </button>
-        <select
+        <Dropdown
           value={index}
-          onChange={(e) => {
+          onChange={(v) => {
             setPage(0);
-            setIndex(e.target.value);
+            setIndex(v);
           }}
-          disabled={source !== "modrinth"}
-          className="rounded-lg border border-border bg-bg px-2 py-2 text-sm text-text outline-none disabled:opacity-50"
-        >
-          {SORTS.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <SourceMenu value={source} onChange={setSource} />
+          options={SORTS.map((s) => ({ value: s.id, label: s.label }))}
+          disabled={source === "ftb"}
+          className="w-40"
+          align="right"
+        />
+        <SourceMenu value={source} onChange={pickSource} />
       </div>
 
-      {source !== "modrinth" ? (
-        <SourceComingSoon source={source} />
-      ) : (
+      {(
       <>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {error && (
@@ -113,36 +130,60 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
         ) : hits.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted">Ничего не найдено</div>
         ) : (
-          <div className="grid gap-2">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
             {hits.map((h) => (
               <div
                 key={h.project_id}
-                className="group flex items-center gap-3.5 rounded-xl border border-border bg-card p-3 transition-colors hover:border-accent/50"
+                onClick={() => setDetail(h)}
+                className="group relative flex cursor-pointer flex-col rounded-2xl border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-[0_10px_30px_-14px] hover:shadow-accent/40"
               >
                 <button
-                  onClick={() => openUrl(`https://modrinth.com/modpack/${h.slug}`)}
-                  title="Открыть на Modrinth"
-                  className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openUrl(packUrl(source, h));
+                  }}
+                  title="Открыть страницу модпака"
+                  className="absolute right-2.5 top-2.5 z-10 grid h-7 w-7 place-items-center rounded-lg bg-bg/70 text-muted opacity-0 backdrop-blur-sm transition-opacity hover:text-accent group-hover:opacity-100"
                 >
-                  {h.icon_url ? (
-                    <img src={h.icon_url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <i className="fa-solid fa-cubes-stacked text-lg text-muted" />
-                  )}
+                  <i className="fa-solid fa-arrow-up-right-from-square text-[11px]" />
                 </button>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-bold text-text">{h.title}</span>
-                    <span className="shrink-0 text-[11px] text-muted">
+
+                <div className="flex items-start gap-3">
+                  <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg">
+                    {h.icon_url ? (
+                      <img src={h.icon_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <i className="fa-solid fa-cubes-stacked text-lg text-muted" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 pr-6">
+                    <div className="truncate text-sm font-bold text-text group-hover:text-accent">
+                      {h.title}
+                    </div>
+                    {h.author && (
+                      <div className="truncate text-[11px] text-muted">
+                        <i className="fa-solid fa-user mr-1" />
+                        {h.author}
+                      </div>
+                    )}
+                    <div className="mt-0.5 text-[11px] text-muted">
                       <i className="fa-solid fa-download mr-1" />
                       {fmt(h.downloads)}
-                    </span>
+                    </div>
                   </div>
-                  <div className="line-clamp-1 text-xs text-muted">{h.description}</div>
                 </div>
+
+                <p className="mt-2.5 line-clamp-2 min-h-[2.4em] text-xs leading-relaxed text-muted">
+                  {h.description}
+                </p>
+
+                <div className="flex-1" />
                 <button
-                  onClick={() => setPicker(h)}
-                  className="flex w-32 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDetail(h);
+                  }}
+                  className="mt-3 flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
                 >
                   <i className="fa-solid fa-download" />
                   Установить
@@ -185,13 +226,6 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
       </>
       )}
 
-      {picker && (
-        <VersionPickerModal
-          pack={picker}
-          onClose={() => setPicker(null)}
-          onInstalled={onInstalled}
-        />
-      )}
     </div>
   );
 }

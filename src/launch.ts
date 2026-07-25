@@ -97,7 +97,7 @@ export function useLauncher() {
   }, []);
 
   const launch = useCallback(
-    async (target: string) => {
+    async (target: string, server?: string) => {
       setError("");
       setProgress(null);
       setStatus("running");
@@ -110,7 +110,8 @@ export function useLauncher() {
         if (target.startsWith("build:")) {
           await invoke("launch_build", { buildId: target.slice(6) });
         } else {
-          await invoke("launch_game", { version: target });
+
+          await invoke("launch_game", { version: target, server: server ?? null });
         }
         setStatus("done");
         timer.current = window.setTimeout(() => setStatus("idle"), 4000);

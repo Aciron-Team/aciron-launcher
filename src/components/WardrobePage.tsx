@@ -162,7 +162,10 @@ export default function WardrobePage() {
 
   const load = useCallback(async () => {
     try {
-      setData(await wardrobeList());
+      const d = await wardrobeList();
+      // Защита от кривого ответа сервера: модель должна быть задана (SC-4)
+      if (!d.active.model) d.active.model = "classic";
+      setData(d);
       setError("");
     } catch (e) {
       setError(String(e).replace(/^Error:\s*/, ""));

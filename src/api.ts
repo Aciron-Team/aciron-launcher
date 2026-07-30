@@ -25,6 +25,14 @@ export type Settings = {
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+// Оборачивает промис в таймаут, чтобы вызов не мог висеть вечно (HNS-07)
+export function withTimeout<T>(p: Promise<T>, ms = 20000): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error("TIMEOUT")), ms)),
+  ]);
+}
+
 const mockSettings: Settings = {
   java_path: "C:\\Program Files\\Java\\jdk-21\\bin\\java.exe",
   ram_mb: 4096,
@@ -468,7 +476,8 @@ export async function wardrobeList(): Promise<WardrobeData> {
       licensed: false,
     };
   }
-  return invoke<WardrobeData>("wardrobe_list");
+  // Ограничиваем время ожидания, чтобы не было бесконечного спиннера (HNS-07)
+  return withTimeout(invoke<WardrobeData>("wardrobe_list"));
 }
 
 export async function wardrobeAdd(
@@ -516,7 +525,8 @@ export type CatalogCape = { id: string; name: string; url: string; by: string };
 
 export async function capeCatalog(): Promise<CatalogCape[]> {
   if (!isTauri) return [];
-  return invoke<CatalogCape[]>("cape_catalog");
+  // Ограничиваем время ожидания первой загрузки каталога плащей (HNS-07)
+  return withTimeout(invoke<CatalogCape[]>("cape_catalog"));
 }
 
 export async function capeCatalogApply(id: string): Promise<void> {
@@ -528,7 +538,8 @@ export type CatalogSkin = { id: string; name: string; url: string; model: SkinMo
 
 export async function skinCatalog(): Promise<CatalogSkin[]> {
   if (!isTauri) return [];
-  return invoke<CatalogSkin[]>("skin_catalog");
+  // Ограничиваем время ожидания первой загрузки каталога (HNS-07)
+  return withTimeout(invoke<CatalogSkin[]>("skin_catalog"));
 }
 
 export async function skinCatalogApply(id: string): Promise<ApplyResult> {
@@ -541,7 +552,8 @@ export type LicenseCapes = { linked: boolean; capes: LicenseCape[] };
 
 export async function licenseCapes(): Promise<LicenseCapes> {
   if (!isTauri) return { linked: false, capes: [] };
-  return invoke<LicenseCapes>("license_capes");
+  // Ограничиваем время ожидания загрузки плащей с лицензии (HNS-07)
+  return withTimeout(invoke<LicenseCapes>("license_capes"));
 }
 
 export async function licenseCapeApply(cape_id: string | null): Promise<void> {

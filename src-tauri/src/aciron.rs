@@ -269,28 +269,31 @@ pub async fn aciron_link_license(app: AppHandle, account_id: String) -> Result<A
 
     let ms = crate::microsoft::interactive_login(app).await?;
 
-    if let Ok(cl) = http() {
-        let _ = cl
-            .post(format!("{}/api/license", base()))
-            .header("Authorization", format!("Bearer {}", acc.aciron_token))
-            .json(&json!({
-                "name": ms.username,
-                "uuid": ms.uuid,
-                "refreshToken": ms.refresh_token,
-            }))
-            .send()
-            .await;
-    }
+    push_license(&acc.aciron_token, &ms).await;
 
     accounts::with_account(&account_id, |a| {
         a.username = ms.username.clone();
         a.uuid = ms.uuid.clone();
         a.access_token = ms.access_token.clone();
         a.refresh_token = ms.refresh_token.clone();
+        a.token_expires = ms.token_expires;
         a.skin_url = ms.skin_url.clone();
         a.licensed = true;
     })
     .ok_or_else(|| "Аккаунт не найден".into())
+}
+
+pub(crate) async fn push_license(aciron_token: &str, ms: &Account) {
+    let Ok(rb) = post("/api/license") else { return };
+    let _ = rb
+        .header("Authorization", format!("Bearer {aciron_token}"))
+        .json(&json!({
+            "name": ms.username,
+            "uuid": ms.uuid,
+            "refreshToken": ms.refresh_token,
+        }))
+        .send()
+        .await;
 }
 
 pub async fn add_playtime(token: String, secs: u64) {

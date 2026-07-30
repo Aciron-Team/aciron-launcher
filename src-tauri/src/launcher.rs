@@ -633,7 +633,7 @@ async fn prepare_and_launch(
     let ram = settings.ram_mb.max(512);
 
     // Идентичность игрока из активного аккаунта (Microsoft / Ely.by / оффлайн).
-    let id = resolve_identity(settings).await?;
+    let id = resolve_identity(app, settings).await?;
 
     let mut args: Vec<String> = vec![
         format!("-Xmx{ram}M"),
@@ -810,8 +810,13 @@ struct Identity {
 }
 
 /// Определяет ник/uuid/токен/тип по активному аккаунту.
-/// Для Microsoft тихо обновляет сессию через refresh-токен.
-async fn resolve_identity(settings: &Settings) -> Result<Identity, String> {
+///
+/// Для Microsoft тихо обновляет сессию через refresh-токен. Если обновлять нечем
+/// или Microsoft отказал — открываем обычный вход вместо ошибки: у аккаунтов, к
+/// которым лицензию подключали давно, refresh-токен мог не сохраниться вовсе, и
+/// «Нет refresh-токена — войдите в Microsoft заново» оказывалось тупиком: текст
+/// говорил, что делать, а сделать это было негде.
+async fn resolve_identity(app: &AppHandle, settings: &Settings) -> Result<Identity, String> {
     match crate::accounts::active_account() {
         // Microsoft, либо аккаунт Aciron ID с привязанной лицензией — реальная авторизация.
         Some(a) if a.kind == "microsoft" || (a.kind == "aciron" && a.licensed) => {
@@ -828,7 +833,20 @@ async fn resolve_identity(settings: &Settings) -> Result<Identity, String> {
                     user_type: "msa".into(),
                 });
             }
-            let fresh = crate::microsoft::refresh_account(&a.refresh_token).await?;
+            let fresh = match crate::microsoft::refresh_account(&a.refresh_token).await {
+                Ok(f) => f,
+                Err(e) => {
+                    // Тихо обновить не вышло — просим войти прямо сейчас.
+                    eprintln!("[account] обновление сессии Microsoft не удалось: {e}");
+                    let f = crate::microsoft::interactive_login(app.clone()).await?;
+                    // Свежий refresh-токен нужен и сервису: он ходит в Mojang за
+                    // скином и плащами лицензии от имени игрока.
+                    if a.kind == "aciron" && !a.aciron_token.is_empty() {
+                        crate::aciron::push_license(&a.aciron_token, &f).await;
+                    }
+                    f
+                }
+            };
             crate::accounts::update_tokens(
                 &a.id,
                 &fresh.access_token,

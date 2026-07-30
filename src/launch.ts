@@ -24,8 +24,15 @@ export function useLauncher() {
   const [status, setStatus] = useState<LaunchStatus>("idle");
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState("");
-  const [gameRunning, setGameRunning] = useState(false);
+
+  const [running, setRunning] = useState<string[]>([]);
+  const runningRef = useRef<string[]>([]);
   const timer = useRef<number | undefined>(undefined);
+
+  const setRun = useCallback((next: string[]) => {
+    runningRef.current = next;
+    setRunning(next);
+  }, []);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -38,38 +45,48 @@ export function useLauncher() {
           setStatus("error");
         }
       }).then((u) => unlisteners.push(u));
-      listen("game-started", async () => {
-        setGameRunning(true);
+      listen<{ id: string }>("game-started", async (e) => {
+        const id = e.payload?.id ?? "";
+        if (!runningRef.current.includes(id)) setRun([...runningRef.current, id]);
         const s = await getSettings();
         if (s.hide_on_launch) (await appWin())?.hide();
       }).then((u) => unlisteners.push(u));
-      listen("game-exited", async () => {
-        setGameRunning(false);
-        const w = await appWin();
-        if (w) {
-          await w.show();
-          await w.unminimize().catch(() => {});
-          await w.setFocus().catch(() => {});
+      listen<{ id: string }>("game-exited", async (e) => {
+        const id = e.payload?.id ?? "";
+        const next = runningRef.current.filter((x) => x !== id);
+        setRun(next);
+
+        if (next.length === 0) {
+          const w = await appWin();
+          if (w) {
+            await w.show();
+            await w.unminimize().catch(() => {});
+            await w.setFocus().catch(() => {});
+          }
         }
       }).then((u) => unlisteners.push(u));
     });
     return () => unlisteners.forEach((u) => u());
-  }, []);
+  }, [setRun]);
 
-  const stop = useCallback(async () => {
-    if (!isTauri) {
-      setGameRunning(false);
-      return;
-    }
-    try {
-      await invoke("stop_game");
-    } catch {
+  const stop = useCallback(
+    async (id?: string) => {
+      if (isTauri) {
+        try {
+          await invoke("stop_game", { id: id ?? null });
+        } catch {
 
-    }
-    setGameRunning(false);
-  }, []);
+        }
+      }
 
-  const mockRun = useCallback(() => {
+      setRun(id ? runningRef.current.filter((x) => x !== id) : []);
+    },
+    [setRun]
+  );
+
+  const isRunning = useCallback((id: string) => running.includes(id), [running]);
+
+  const mockRun = useCallback((target: string) => {
     const steps: Progress[] = [
       { stage: "manifest", message: "Получение списка версий", current: 1, total: 1 },
       { stage: "version", message: "Загрузка описания версии", current: 1, total: 1 },
@@ -89,12 +106,13 @@ export function useLauncher() {
       } else {
         setStatus("done");
         setProgress({ stage: "done", message: "Игра запущена", current: 1, total: 1 });
-        setGameRunning(true);
+
+        setRun([...runningRef.current, target]);
         timer.current = window.setTimeout(() => setStatus("idle"), 3500);
       }
     };
     tick();
-  }, []);
+  }, [setRun]);
 
   const launch = useCallback(
     async (target: string, server?: string) => {
@@ -103,7 +121,7 @@ export function useLauncher() {
       setStatus("running");
 
       if (!isTauri) {
-        mockRun();
+        mockRun(target);
         return;
       }
       try {
@@ -126,5 +144,14 @@ export function useLauncher() {
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
-  return { status, progress, error, launch, gameRunning, stop };
+  return {
+    status,
+    progress,
+    error,
+    launch,
+    running,
+    isRunning,
+    gameRunning: running.length > 0,
+    stop,
+  };
 }

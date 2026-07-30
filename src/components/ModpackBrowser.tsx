@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { searchContent, openUrl, type ModHit } from "../api";
+import { searchContent, contentCategories, openUrl, type ModHit } from "../api";
 import SourceMenu, { type Source } from "./SourceMenu";
-import Dropdown from "./Dropdown";
 import ModpackDetail from "./ModpackDetail";
+import VersionPickerModal from "./VersionPickerModal";
+import Pagination from "./Pagination";
+import { cardInDelay } from "../anim";
 
 function packUrl(source: Source, h: ModHit): string {
   if (source === "curseforge") return `https://www.curseforge.com/minecraft/modpacks/${h.slug}`;
@@ -30,19 +32,22 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [index, setIndex] = useState("downloads");
+  const [cats, setCats] = useState<string[]>([]);
+  const [allCats, setAllCats] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [hits, setHits] = useState<ModHit[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<ModHit | null>(null);
+  const [versionPick, setVersionPick] = useState<ModHit | null>(null);
   const seq = useRef(0);
 
   useEffect(() => {
     const my = ++seq.current;
     setLoading(true);
     setError("");
-    searchContent(source, applied, "", "", [], index, page * PER_PAGE, PER_PAGE, "modpack")
+    searchContent(source, applied, "", "", cats, index, page * PER_PAGE, PER_PAGE, "modpack")
       .then((r) => {
         if (my !== seq.current) return;
         setHits(r.hits);
@@ -50,7 +55,7 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
       })
       .catch((e) => my === seq.current && setError(String(e)))
       .finally(() => my === seq.current && setLoading(false));
-  }, [source, applied, index, page]);
+  }, [source, applied, cats, index, page]);
 
   const doSearch = () => {
     setPage(0);
@@ -62,13 +67,15 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
     setPage(0);
     setApplied("");
     setQuery("");
+    setCats([]);
   };
 
+  useEffect(() => {
+    if (source !== "modrinth") return;
+    contentCategories(source).then(setAllCats).catch(() => {});
+  }, [source]);
+
   const totalPages = Math.min(Math.ceil(total / PER_PAGE), 100);
-  const winStart = Math.max(0, Math.min(page - 2, totalPages - 5));
-  const pages = Array.from({ length: Math.min(5, totalPages) }, (_, i) => winStart + i).filter(
-    (p) => p < totalPages
-  );
 
   if (detail) {
     return (
@@ -82,150 +89,200 @@ export default function ModpackBrowser({ onInstalled }: { onInstalled: () => voi
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-        <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-bg px-3">
-          <i className="fa-solid fa-magnifying-glass text-xs text-muted" />
-          <input
-            className="w-full bg-transparent py-2 text-sm text-text outline-none placeholder:text-muted/60"
-            placeholder="Поиск модпаков…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && doSearch()}
-          />
+    <div className="flex min-h-0 flex-1 gap-5">
+      {}
+      <aside className="flex w-[190px] shrink-0 flex-col overflow-y-auto pr-1">
+        <div className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          Сортировка
         </div>
-        <button
-          onClick={doSearch}
-          className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg transition-colors hover:bg-accent-hover disabled:opacity-50"
-        >
-          <i className="fa-solid fa-magnifying-glass text-xs" />
-          Поиск
-        </button>
-        <Dropdown
-          value={index}
-          onChange={(v) => {
-            setPage(0);
-            setIndex(v);
-          }}
-          options={SORTS.map((s) => ({ value: s.id, label: s.label }))}
-          disabled={source === "ftb"}
-          className="w-40"
-          align="right"
-        />
-        <SourceMenu value={source} onChange={pickSource} />
-      </div>
+        <div className="space-y-1">
+          {SORTS.map((s) => (
+            <button
+              key={s.id}
+              disabled={source === "ftb"}
+              onClick={() => {
+                setPage(0);
+                setIndex(s.id);
+              }}
+              className={`w-full truncate rounded-[8px] px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                index === s.id ? "bg-card text-text" : "text-muted hover:text-text"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
 
-      {(
-      <>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {error && (
-          <div className="mb-2 rounded-lg bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
-            {error}
-          </div>
-        )}
-        {loading ? (
-          <div className="grid place-items-center py-16 text-muted">
-            <i className="fa-solid fa-spinner fa-spin text-2xl" />
-          </div>
-        ) : hits.length === 0 ? (
-          <div className="py-16 text-center text-sm text-muted">Ничего не найдено</div>
-        ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
-            {hits.map((h) => (
-              <div
-                key={h.project_id}
-                onClick={() => setDetail(h)}
-                className="group relative flex cursor-pointer flex-col rounded-2xl border border-border bg-card p-3.5 transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-[0_10px_30px_-14px] hover:shadow-accent/40"
-              >
+        {}
+        {source === "modrinth" && allCats.length > 0 && (
+          <>
+            <div className="mb-1 mt-4 flex items-center gap-2 px-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                Категории
+              </span>
+              {cats.length > 0 && (
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openUrl(packUrl(source, h));
+                  onClick={() => {
+                    setPage(0);
+                    setCats([]);
                   }}
-                  title="Открыть страницу модпака"
-                  className="absolute right-2.5 top-2.5 z-10 grid h-7 w-7 place-items-center rounded-lg bg-bg/70 text-muted opacity-0 backdrop-blur-sm transition-opacity hover:text-accent group-hover:opacity-100"
+                  title="Сбросить категории"
+                  className="ml-auto text-[11px] text-accent transition-colors hover:text-accent-hover"
                 >
-                  <i className="fa-solid fa-arrow-up-right-from-square text-[11px]" />
+                  сброс
                 </button>
+              )}
+            </div>
+            <div className="space-y-1 pb-2">
+              {allCats.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => {
+                    setPage(0);
+                    setCats((prev) =>
+                      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+                    );
+                  }}
+                  className={`w-full truncate rounded-[8px] px-3 py-2 text-left text-sm capitalize transition-colors ${
+                    cats.includes(c) ? "bg-accent/15 text-accent" : "text-muted hover:text-text"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </aside>
 
-                <div className="flex items-start gap-3">
-                  <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg">
+      {}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="mb-3 flex items-center gap-2">
+          <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-card px-3">
+            <i className="fa-solid fa-magnifying-glass text-xs text-muted" />
+            <input
+              className="w-full bg-transparent text-sm text-text outline-none placeholder:text-muted"
+              placeholder="Поиск модпаков…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && doSearch()}
+            />
+            {query && (
+              <button
+                onClick={() => {
+                  setQuery("");
+                  setApplied("");
+                  setPage(0);
+                }}
+                title="Очистить"
+                className="shrink-0 text-muted transition-colors hover:text-text"
+              >
+                <i className="fa-solid fa-xmark text-xs" />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={doSearch}
+            className="h-10 shrink-0 rounded-[8px] bg-accent px-4 text-sm font-semibold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
+          >
+            Поиск
+          </button>
+          <SourceMenu value={source} onChange={pickSource} />
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto py-1 pr-1 pb-4">
+          {error && (
+            <div className="rounded-[12px] bg-[#ef4444]/10 px-3 py-2 text-sm text-[#ef4444]">
+              {error}
+            </div>
+          )}
+          {loading ? (
+            <div className="grid place-items-center py-16 text-muted">
+              <i className="fa-solid fa-spinner fa-spin text-2xl" />
+            </div>
+          ) : hits.length === 0 ? (
+            <div className="py-16 text-center text-sm text-muted">Ничего не найдено</div>
+          ) : (
+            <>
+              {hits.map((h, i) => (
+                <div
+                  key={h.project_id}
+                  onClick={() => setDetail(h)}
+                  style={cardInDelay(i)}
+                  className="card-in group flex cursor-pointer items-center gap-3 rounded-[16px] border-1 border-[#232427]/65 bg-card p-3 transition-colors hover:border-accent/40"
+                >
+                  <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-bg">
                     {h.icon_url ? (
                       <img src={h.icon_url} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <i className="fa-solid fa-cubes-stacked text-lg text-muted" />
+                      <i className="fa-solid fa-cubes-stacked text-muted" />
                     )}
                   </div>
-                  <div className="min-w-0 flex-1 pr-6">
-                    <div className="truncate text-sm font-bold text-text group-hover:text-accent">
-                      {h.title}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-text group-hover:text-accent">
+                        {h.title}
+                      </span>
+                      {h.author && (
+                        <span className="shrink-0 text-[11px] text-[#818181]">от {h.author}</span>
+                      )}
                     </div>
-                    {h.author && (
-                      <div className="truncate text-[11px] text-muted">
-                        <i className="fa-solid fa-user mr-1" />
-                        {h.author}
-                      </div>
-                    )}
-                    <div className="mt-0.5 text-[11px] text-muted">
-                      <i className="fa-solid fa-download mr-1" />
-                      {fmt(h.downloads)}
+                    <div className="truncate text-[12px] text-muted">{h.description}</div>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      {h.categories.slice(0, 3).map((c) => (
+                        <span
+                          key={c}
+                          className="rounded-md bg-bg px-1.5 py-0.5 text-[10px] capitalize text-muted"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                      <span className="text-[10px] text-[#818181]">
+                        <i className="fa-solid fa-download mr-1" />
+                        {fmt(h.downloads)}
+                      </span>
                     </div>
                   </div>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openUrl(packUrl(source, h));
+                    }}
+                    title="Открыть страницу модпака"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-[8px] bg-bg text-muted opacity-0 transition hover:text-accent group-hover:opacity-100"
+                  >
+                    <i className="fa-solid fa-arrow-up-right-from-square text-xs" />
+                  </button>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setVersionPick(h);
+                    }}
+                    className="h-9 w-[116px] shrink-0 rounded-[8px] bg-accent text-sm font-semibold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
+                  >
+                    Установить
+                  </button>
                 </div>
+              ))}
 
-                <p className="mt-2.5 line-clamp-2 min-h-[2.4em] text-xs leading-relaxed text-muted">
-                  {h.description}
-                </p>
-
-                <div className="flex-1" />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDetail(h);
-                  }}
-                  className="mt-3 flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
-                >
-                  <i className="fa-solid fa-download" />
-                  Установить
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+              {}
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </>
+          )}
+        </div>
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-1.5 border-t border-border py-2.5">
-          <button
-            disabled={page === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-card hover:text-text disabled:opacity-30"
-          >
-            <i className="fa-solid fa-chevron-left text-xs" />
-          </button>
-          {pages.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              className={`h-8 min-w-8 rounded-lg px-2 text-sm font-semibold transition-colors ${
-                p === page ? "bg-accent text-bg" : "text-muted hover:bg-card hover:text-text"
-              }`}
-            >
-              {p + 1}
-            </button>
-          ))}
-          <button
-            disabled={page >= totalPages - 1}
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-card hover:text-text disabled:opacity-30"
-          >
-            <i className="fa-solid fa-chevron-right text-xs" />
-          </button>
-        </div>
+      {versionPick && (
+        <VersionPickerModal
+          pack={versionPick}
+          source={source}
+          onClose={() => setVersionPick(null)}
+          onInstalled={onInstalled}
+        />
       )}
-      </>
-      )}
-
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-export type DropdownOption = { value: string; label: string; icon?: string };
+export type DropdownOption = { value: string; label: string; icon?: string; node?: ReactNode };
 
 type Pos = {
   top?: number;
@@ -72,9 +72,15 @@ export default function Dropdown({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm font-medium text-text transition-colors hover:border-accent/50 disabled:opacity-50"
+        className={`flex h-10 w-full items-center gap-2.5 rounded-xl border px-3 text-sm text-text transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+          open ? "border-accent/60 bg-card" : "border-border bg-card hover:border-accent/40"
+        }`}
       >
-        {cur?.icon && <i className={`fa-solid ${cur.icon} text-xs text-muted`} />}
+        {(cur?.node || cur?.icon) && (
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[6px] bg-bg text-accent">
+            {cur?.node ?? <i className={`fa-solid ${cur!.icon} text-[11px]`} />}
+          </span>
+        )}
         <span className="flex-1 truncate text-left">{cur?.label ?? placeholder}</span>
         <i
           className={`fa-solid fa-chevron-down text-[10px] text-muted transition-transform ${
@@ -89,7 +95,7 @@ export default function Dropdown({
           <>
             <div className="fixed inset-0 z-[9998]" onClick={() => setOpen(false)} />
             <div
-              className="modal-panel fixed z-[9999] overflow-y-auto rounded-xl border border-border bg-panel py-1 shadow-xl shadow-black/50"
+              className="dropdown-in fixed z-[9999] overflow-y-auto rounded-[14px] border-1 border-[#232427]/65 bg-panel p-1 shadow-xl shadow-black/50"
               style={(() => {
 
                 const s = (window as unknown as { __acironScale?: number }).__acironScale || 1;
@@ -113,11 +119,19 @@ export default function Dropdown({
                     onChange(o.value);
                     setOpen(false);
                   }}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-card ${
-                    o.value === value ? "text-accent" : "text-text"
+                  className={`flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-sm transition-colors ${
+                    o.value === value ? "bg-card text-accent" : "text-muted hover:bg-card hover:text-text"
                   }`}
                 >
-                  {o.icon && <i className={`fa-solid ${o.icon} w-4 text-center text-xs`} />}
+                  {(o.node || o.icon) && (
+                    <span
+                      className={`grid h-7 w-7 shrink-0 place-items-center rounded-[8px] ${
+                        o.value === value ? "bg-accent/15 text-accent" : "bg-bg text-muted"
+                      }`}
+                    >
+                      {o.node ?? <i className={`fa-solid ${o.icon} text-[11px]`} />}
+                    </span>
+                  )}
                   <span className="flex-1 truncate pr-2">{o.label}</span>
                   {o.value === value && <i className="fa-solid fa-check text-xs text-accent" />}
                 </button>

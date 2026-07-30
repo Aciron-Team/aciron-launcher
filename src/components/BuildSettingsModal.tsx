@@ -7,6 +7,8 @@ import {
   changeBuildVersion,
   renameBuild,
   setBuildImage,
+  setBuildBanner,
+  getBuildBanner,
   pickFile,
   type Build,
   type VersionInfo,
@@ -38,13 +40,40 @@ export default function BuildSettingsModal({
   const [name, setName] = useState(build.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const [banner, setBanner] = useState<string | null>(null);
   const toast = useToast();
 
   useEffect(() => {
     listVersions()
       .then(setVersions)
       .catch(() => setVersions([]));
-  }, []);
+    getBuildBanner(build.id).then(setBanner).catch(() => {});
+  }, [build.id]);
+
+  const changeBanner = async () => {
+    const f = await pickFile("Изображение", ["png", "jpg", "jpeg", "webp", "gif"]);
+    if (!f) return;
+    try {
+      const updated = await setBuildBanner(build.id, f);
+      onUpdated(updated);
+      setBanner(await getBuildBanner(build.id));
+      toast("Баннер обновлён", "success");
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  };
+
+  const dropBanner = async () => {
+    try {
+      const updated = await setBuildBanner(build.id, "");
+      onUpdated(updated);
+      setBanner(null);
+      toast("Баннер убран", "info");
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  };
 
   const options = useMemo(() => {
     const list = (versions ?? []).filter((v) => showSnapshots || v.type === "release");
@@ -138,6 +167,49 @@ export default function BuildSettingsModal({
             />
             <p className="mt-1.5 text-[11px] text-muted">Папка сборки на диске не изменится.</p>
           </div>
+        </div>
+
+        {}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs text-muted">Баннер карточки</span>
+            {banner && (
+              <button
+                onClick={dropBanner}
+                className="text-[11px] font-medium text-muted transition-colors hover:text-[#ef4444]"
+              >
+                <i className="fa-solid fa-trash-can mr-1" />
+                Убрать
+              </button>
+            )}
+          </div>
+          <button
+            onClick={changeBanner}
+            title={banner ? "Сменить баннер" : "Выбрать картинку"}
+            className="group relative h-28 w-full overflow-hidden rounded-[16px] border border-border bg-bg"
+          >
+            {banner ? (
+              <img src={banner} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="grid h-full w-full place-items-center text-muted">
+                <span className="flex flex-col items-center gap-1">
+                  <i className="fa-solid fa-image" />
+                  <span className="text-[11px]">Добавить баннер</span>
+                </span>
+              </span>
+            )}
+            {banner && (
+              <span className="absolute inset-0 grid place-items-center bg-black/55 opacity-0 transition-opacity group-hover:opacity-100">
+                <span className="flex flex-col items-center gap-1 text-white">
+                  <i className="fa-solid fa-camera" />
+                  <span className="text-[10px] font-medium">Сменить</span>
+                </span>
+              </span>
+            )}
+          </button>
+          <p className="mt-1.5 text-[11px] text-muted">
+            Показывается на карточке сборки. Рекомендуемый размер — 570×300.
+          </p>
         </div>
 
         {}

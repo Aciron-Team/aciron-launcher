@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   type Settings,
   getSettings,
@@ -8,14 +8,22 @@ import {
   pickFolder,
   pickFile,
   openFolder,
+  moveDirectories,
   hardwareCapable,
+  totalRamMb,
 } from "../api";
-import {
-  useTheme,
-  PRESET_LIST,
-  buildCustom,
-  type Palette,
-} from "../ThemeContext";
+import { useTheme, PRESET_LIST, SURFACE } from "../ThemeContext";
+import Modal from "./Modal";
+import { getSfxPrefs, setSfxPrefs } from "../sfx";
+import { useToast } from "./../ToastContext";
+
+const FOLDER_FIELDS: { key: "game_dir" | "versions_dir" | "builds_dir"; label: string }[] = [
+  { key: "game_dir", label: "Папка игры" },
+  { key: "versions_dir", label: "Папка версий" },
+  { key: "builds_dir", label: "Папка сборок" },
+];
+
+type FolderMove = { from: string; to: string; label: string };
 
 const inputCls =
   "w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none transition-colors placeholder:text-muted/60 focus:border-accent";
@@ -106,38 +114,34 @@ function PathRow({
 
 function ThemeCard({
   label,
-  palette,
+  accent,
   active,
   onClick,
 }: {
   label: string;
-  palette: Palette;
+  accent: string;
   active: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`group flex flex-col gap-2 rounded-xl border p-2.5 text-left transition-all ${
-        active ? "border-accent ring-1 ring-accent" : "border-border hover:border-accent/40"
+      className={`group flex flex-col gap-2 rounded-[14px] border-1 p-2.5 text-left transition-colors ${
+        active ? "border-accent bg-card" : "border-[#232427]/65 hover:border-accent/40"
       }`}
     >
       <div
-        className="relative grid h-14 w-full place-items-center overflow-hidden rounded-lg"
-        style={{ background: palette.bg }}
+        className="relative flex h-14 w-full items-center gap-2 overflow-hidden rounded-[10px] px-2.5"
+        style={{ background: SURFACE.bg }}
       >
-        <div className="absolute left-1.5 top-1.5 h-4 w-8 rounded" style={{ background: palette.card }} />
-        <div
-          className="rounded-md px-2.5 py-1 text-[11px] font-bold"
-          style={{ background: palette.accent, color: palette.bg }}
-        >
-          Aa
-        </div>
+        <span className="h-8 w-8 shrink-0 rounded-[8px]" style={{ background: accent }} />
+        <span className="flex-1 space-y-1.5">
+          <span className="block h-2 w-full rounded-full" style={{ background: SURFACE.card }} />
+          <span className="block h-2 w-2/3 rounded-full" style={{ background: SURFACE.card }} />
+        </span>
       </div>
       <div className="flex items-center justify-between">
-        <span className={`text-xs font-semibold ${active ? "text-accent" : "text-text"}`}>
-          {label}
-        </span>
+        <span className={`text-xs font-medium ${active ? "text-accent" : "text-text"}`}>{label}</span>
         {active && <i className="fa-solid fa-circle-check text-xs text-accent" />}
       </div>
     </button>
@@ -169,10 +173,24 @@ function ColorField({
   );
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({
+  onDirtyChange,
+}: {
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const [s, setS] = useState<Settings | null>(null);
   const [saved, setSaved] = useState(true);
+
+  useEffect(() => {
+    onDirtyChange?.(!saved);
+  }, [saved, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [hwCap, setHwCap] = useState(true);
+
+  const [ramMax, setRamMax] = useState(16384);
+
+  const [sfx, setSfx] = useState(getSfxPrefs);
   const [cat, setCat] = useState<CatId>("theme");
   const {
     state: theme,
@@ -184,10 +202,22 @@ export default function SettingsPage() {
     deleteSaved,
   } = useTheme();
   const [presetName, setPresetName] = useState("");
+  const [folderPrompt, setFolderPrompt] = useState<FolderMove[] | null>(null);
+  const toast = useToast();
+
+  const origRef = useRef<Record<"game_dir" | "versions_dir" | "builds_dir", string> | null>(null);
 
   useEffect(() => {
-    getSettings().then(setS);
+    getSettings().then((fresh) => {
+      setS(fresh);
+      origRef.current = {
+        game_dir: fresh.game_dir,
+        versions_dir: fresh.versions_dir,
+        builds_dir: fresh.builds_dir,
+      };
+    });
     hardwareCapable().then(setHwCap);
+    totalRamMb().then(setRamMax);
   }, []);
 
   if (!s) {
@@ -203,9 +233,44 @@ export default function SettingsPage() {
     setSaved(false);
   };
 
-  const onSave = async () => {
+  const persist = async (move: boolean, moves: FolderMove[]) => {
     await saveSettings(s);
+    origRef.current = {
+      game_dir: s.game_dir,
+      versions_dir: s.versions_dir,
+      builds_dir: s.builds_dir,
+    };
     setSaved(true);
+    setFolderPrompt(null);
+
+    if (move && moves.length > 0) {
+      window.dispatchEvent(
+        new CustomEvent("aciron-task-start", { detail: { name: "Перенос файлов" } })
+      );
+      moveDirectories(moves.map((m) => ({ from: m.from, to: m.to })))
+        .then(() => toast("Файлы перенесены в новое место", "success"))
+        .catch((e) => {
+          window.dispatchEvent(new CustomEvent("aciron-task-end"));
+          toast(`Перенос файлов: ${String(e)}`, "error");
+        });
+    }
+  };
+
+  const onSave = async () => {
+    const orig = origRef.current;
+    const moves: FolderMove[] = orig
+      ? FOLDER_FIELDS.map((f) => ({
+          from: orig[f.key],
+          to: String(s[f.key]),
+          label: f.label,
+        })).filter((m) => m.from && m.to && m.from !== m.to)
+      : [];
+
+    if (moves.length > 0) {
+      setFolderPrompt(moves);
+      return;
+    }
+    await persist(false, []);
   };
   const onReset = async () => {
     const def = await defaultSettings();
@@ -226,29 +291,27 @@ export default function SettingsPage() {
   };
 
   const ramGb = (s.ram_mb / 1024).toFixed(1);
-  const customPalette = buildCustom(theme.customBg, theme.customAccent);
 
   return (
     <div className="flex h-full min-h-0">
       {}
-      <nav className="flex w-52 shrink-0 flex-col gap-1 border-r border-border bg-panel/30 p-3">
-        <div className="mb-1 px-2 text-[15px] font-bold text-text">Настройки</div>
+      <nav className="flex w-52 shrink-0 flex-col gap-1 border-r border-border p-3">
         {CATS.map((c) => (
           <button
             key={c.id}
             onClick={() => setCat(c.id)}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-              cat === c.id ? "bg-accent/15 text-accent" : "text-muted hover:bg-card hover:text-text"
+            className={`flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm transition-colors ${
+              cat === c.id ? "bg-card text-text" : "text-muted hover:text-text"
             }`}
           >
-            <i className={`fa-solid ${c.icon} w-4 text-center`} />
+            <i className={`fa-solid ${c.icon} w-4 text-center ${cat === c.id ? "text-accent" : ""}`} />
             {c.label}
           </button>
         ))}
         <div className="mt-auto space-y-1 pt-3">
           <button
             onClick={onReset}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-card hover:text-text"
+            className="flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-muted transition-colors hover:text-text"
           >
             <i className="fa-solid fa-arrow-rotate-left w-4 text-center" />
             Сбросить
@@ -268,14 +331,14 @@ export default function SettingsPage() {
                     <ThemeCard
                       key={t.id}
                       label={t.label}
-                      palette={t.palette}
+                      accent={t.accent}
                       active={theme.id === t.id}
                       onClick={() => setTheme(t.id)}
                     />
                   ))}
                   <ThemeCard
-                    label="Custom"
-                    palette={customPalette}
+                    label="Свой цвет"
+                    accent={theme.customAccent}
                     active={theme.id === "custom"}
                     onClick={() => setTheme("custom")}
                   />
@@ -284,15 +347,13 @@ export default function SettingsPage() {
                   <Card>
                     <div className="flex flex-wrap items-center gap-6 px-4 py-4">
                       <ColorField
-                        label="Фон"
-                        value={theme.customBg}
-                        onChange={(v) => setCustom({ customBg: v })}
-                      />
-                      <ColorField
-                        label="Акцент"
+                        label="Цвет акцента"
                         value={theme.customAccent}
                         onChange={(v) => setCustom({ customAccent: v })}
                       />
+                      <span className="text-[11px] leading-relaxed text-muted">
+                        Фон и панели в новом дизайне общие для всех тем — меняется только акцент.
+                      </span>
                     </div>
                     {}
                     <div className="flex items-center gap-2 border-t border-border px-4 py-3">
@@ -341,13 +402,9 @@ export default function SettingsPage() {
                             title="Применить пресет"
                           >
                             <span
-                              className="h-6 w-6 shrink-0 rounded-md border border-border"
-                              style={{ background: p.bg }}
+                              className="h-6 w-6 shrink-0 rounded-md"
+                              style={{ background: p.accent }}
                             >
-                              <span
-                                className="block h-full w-1/2 rounded-l-md"
-                                style={{ background: p.accent }}
-                              />
                             </span>
                             <span className="text-sm font-medium text-text">{p.name}</span>
                           </button>
@@ -418,20 +475,22 @@ export default function SettingsPage() {
                     <input
                       type="range"
                       min={1024}
-                      max={16384}
+                      max={ramMax}
                       step={512}
-                      value={s.ram_mb}
+                      value={Math.min(s.ram_mb, ramMax)}
                       onChange={(e) => update({ ram_mb: Number(e.target.value) })}
                       className="aciron-range"
                       style={
                         {
-                          "--pct": `${((s.ram_mb - 1024) / (16384 - 1024)) * 100}%`,
+                          "--pct": `${
+                            ((Math.min(s.ram_mb, ramMax) - 1024) / Math.max(1, ramMax - 1024)) * 100
+                          }%`,
                         } as CSSProperties
                       }
                     />
                     <div className="mt-1 flex justify-between text-[11px] text-muted">
                       <span>1 ГБ</span>
-                      <span>16 ГБ</span>
+                      <span>{Math.round(ramMax / 1024)} ГБ</span>
                     </div>
                   </div>
                   <Field
@@ -467,6 +526,56 @@ export default function SettingsPage() {
               <>
                 <h2 className="text-lg font-bold text-text">Поведение лаунчера</h2>
                 <Card>
+                  {}
+                  <Field label="Звук нажатия" hint="Щелчок при нажатии на кнопки">
+                    <Toggle
+                      value={sfx.click}
+                      onChange={(v) => {
+                        setSfx((p) => ({ ...p, click: v }));
+                        setSfxPrefs({ click: v });
+                      }}
+                    />
+                  </Field>
+                  <Field label="Звук наведения" hint="Тихий отклик при наведении на кнопку">
+                    <Toggle
+                      value={sfx.hover}
+                      onChange={(v) => {
+                        setSfx((p) => ({ ...p, hover: v }));
+                        setSfxPrefs({ hover: v });
+                      }}
+                    />
+                  </Field>
+                </Card>
+                <Card>
+                  <Field
+                    label="Размер интерфейса"
+                    hint="Масштаб окна лаунчера — работает и в развёрнутом/полноэкранном окне"
+                  >
+                    <span className="rounded-md bg-bg px-2.5 py-1 text-sm font-semibold text-accent">
+                      {s.ui_scale}%
+                    </span>
+                  </Field>
+                  <div className="px-4 pb-4">
+                    <input
+                      type="range"
+                      min={80}
+                      max={160}
+                      step={5}
+                      value={s.ui_scale}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        update({ ui_scale: v });
+
+                        window.dispatchEvent(new CustomEvent("aciron-ui-scale", { detail: v }));
+                      }}
+                      className="aciron-range"
+                      style={{ "--pct": `${((s.ui_scale - 80) / (160 - 80)) * 100}%` } as CSSProperties}
+                    />
+                    <div className="mt-1 flex justify-between text-[11px] text-muted">
+                      <span>80%</span>
+                      <span>160%</span>
+                    </div>
+                  </div>
                   <Field
                     label="Скрывать лаунчер при запуске игры"
                     hint="Спрячется, пока игра открыта, и вернётся после её закрытия"
@@ -489,10 +598,16 @@ export default function SettingsPage() {
                     <Toggle value={s.discord_rpc} onChange={(v) => update({ discord_rpc: v })} />
                   </Field>
                   <Field
-                    label="Авто добовление серверов"
+                    label="Авто добавление серверов"
                     hint="Добавляет топ 5 серверов из категории Сервера в список серверов"
                   >
                     <Toggle value={s.autoadd_server} onChange={(v) => update({ autoadd_server: v })} />
+                  </Field>
+                  <Field
+                    label="Звук уведомлений"
+                    hint="Сигнал при заявке в друзья и других всплывающих уведомлениях"
+                  >
+                    <Toggle value={s.notify_sound} onChange={(v) => update({ notify_sound: v })} />
                   </Field>
                   <Field
                     label="Проверять обновления при запуске"
@@ -527,8 +642,12 @@ export default function SettingsPage() {
         </div>
 
         {}
-        {!saved && (
-          <div className="save-pop flex items-center gap-3 border-t border-border bg-panel px-6 py-3">
+        <div
+          aria-hidden={saved}
+          className={`flex items-center gap-3 border-t border-border bg-panel px-6 py-3 transition-opacity duration-200 ${
+            saved ? "pointer-events-none opacity-0" : "opacity-100"
+          }`}
+        >
             <span className="flex items-center gap-2 text-sm text-muted">
               <i className="fa-solid fa-circle-info text-accent" />
               Есть несохранённые изменения
@@ -536,7 +655,18 @@ export default function SettingsPage() {
             <div className="ml-auto flex items-center gap-2">
               <button
                 onClick={() => {
-                  getSettings().then(setS);
+                  getSettings().then((fresh) => {
+                    setS(fresh);
+                    origRef.current = {
+                      game_dir: fresh.game_dir,
+                      versions_dir: fresh.versions_dir,
+                      builds_dir: fresh.builds_dir,
+                    };
+
+                    window.dispatchEvent(
+                      new CustomEvent("aciron-ui-scale", { detail: fresh.ui_scale })
+                    );
+                  });
                   setSaved(true);
                 }}
                 className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-text"
@@ -551,9 +681,52 @@ export default function SettingsPage() {
                 Сохранить
               </button>
             </div>
-          </div>
-        )}
+        </div>
       </div>
+
+      {folderPrompt && (
+        <Modal title="Папки изменены" icon="fa-folder-tree" onClose={() => setFolderPrompt(null)}>
+          <div className="p-5">
+            <p className="text-sm text-text">
+              Вы изменили расположение папок. Перенести существующие файлы в новое место?
+            </p>
+            <ul className="mt-3 space-y-1.5">
+              {folderPrompt.map((m) => (
+                <li key={m.label} className="rounded-lg bg-card px-3 py-2 text-xs">
+                  <div className="font-semibold text-text">{m.label}</div>
+                  <div className="mt-0.5 truncate text-muted" title={m.from}>
+                    из: {m.from}
+                  </div>
+                  <div className="truncate text-muted" title={m.to}>
+                    в: {m.to}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                onClick={() => setFolderPrompt(null)}
+                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted transition-colors hover:text-text"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => persist(false, folderPrompt)}
+                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text transition-colors hover:border-accent/50"
+              >
+                Просто сохранить
+              </button>
+              <button
+                onClick={() => persist(true, folderPrompt)}
+                className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
+              >
+                <i className="fa-solid fa-truck-fast" />
+                Перенести и сохранить
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

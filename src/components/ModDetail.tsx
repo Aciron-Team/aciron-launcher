@@ -31,7 +31,8 @@ function fmt(n: number): string {
 export default function ModDetail({
   build,
   hit,
-  kind = "mod",
+
+  kind: _kind = "mod",
   source = "modrinth",
   onBack,
   onInstalled,
@@ -71,9 +72,6 @@ export default function ModDetail({
     }
   };
 
-  const kindLabel =
-    kind === "resourcepack" ? "ресурспак" : kind === "shader" ? "шейдер" : "мод";
-
   const install = async () => {
     if (installed || busy) return;
     setBusy(true);
@@ -106,81 +104,153 @@ export default function ModDetail({
   ];
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col px-8 py-6">
       {}
-      <div className="flex items-center gap-3 border-b border-border px-5 py-3">
-        <button
-          onClick={onBack}
-          className="grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-card hover:text-text"
-        >
-          <i className="fa-solid fa-arrow-left" />
-        </button>
-        <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-bg">
+      <div className="mb-5 flex items-start gap-4">
+        <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-[16px] bg-card">
           {icon ? (
             <img src={icon} alt="" className="h-full w-full object-cover" />
           ) : (
-            <i className="fa-solid fa-cube text-muted" />
+            <i className="fa-solid fa-cube text-2xl text-muted" />
           )}
         </div>
+
         <div className="min-w-0 flex-1">
-          <div className="truncate text-lg font-bold text-text">{hit.title}</div>
-          <div className="flex items-center gap-3 text-xs text-muted">
-            {hit.author && (
-              <span>
-                <i className="fa-solid fa-user mr-1" />
-                {hit.author}
-              </span>
-            )}
+          <h1 className="truncate text-[30px] font-light leading-none text-text">{hit.title}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[#818181]">
+            {hit.author && <span>от {hit.author}</span>}
             <span>
-              <i className="fa-solid fa-download mr-1" />
+              <i className="fa-solid fa-download mr-1 text-[10px]" />
               {fmt(downloads)}
             </span>
             {project && (
               <span>
-                <i className="fa-solid fa-heart mr-1" />
+                <i className="fa-solid fa-heart mr-1 text-[10px]" />
                 {fmt(project.followers)}
               </span>
             )}
           </div>
+          <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-muted">
+            {hit.description}
+          </p>
         </div>
-        <button
-          onClick={install}
-          disabled={installed || busy}
-          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
-            installed
-              ? "cursor-default bg-bg text-text"
-              : "bg-accent text-bg hover:bg-accent-hover active:bg-accent-active disabled:opacity-60"
-          }`}
-        >
-          <i className={`fa-solid ${busy ? "fa-spinner fa-spin" : installed ? "fa-check" : "fa-download"}`} />
-          {busy ? "Установка…" : installed ? "Установлено" : "Скачать"}
-        </button>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {links.find((l) => l.url) && (
+            <button
+              onClick={() => openUrl(links.find((l) => l.url)!.url!)}
+              title="Открыть страницу проекта"
+              className="grid h-11 w-11 place-items-center rounded-[8px] bg-card text-muted transition-colors hover:text-accent"
+            >
+              <i className="fa-solid fa-arrow-up-right-from-square text-sm" />
+            </button>
+          )}
+          <button
+            onClick={install}
+            disabled={installed || busy}
+            className={`flex h-11 items-center gap-2 rounded-[8px] px-7 text-sm font-semibold transition-colors ${
+              installed
+                ? "cursor-default bg-card text-muted"
+                : "bg-accent text-bg hover:bg-accent-hover active:bg-accent-active disabled:opacity-60"
+            }`}
+          >
+            {busy && <i className="fa-solid fa-spinner fa-spin text-xs" />}
+            {busy ? "Установка…" : installed ? "Установлено" : "Скачать"}
+          </button>
+        </div>
       </div>
 
       {}
-      <div className="flex items-center gap-1 border-b border-border px-4">
-        {([
-          ["about", "Описание"],
-          ["versions", "Версии"],
-        ] as const).map(([id, label]) => (
+      <div className="mb-4 flex items-baseline gap-4">
+        {(
+          [
+            ["about", "Описание"],
+            ["versions", "Версии"],
+          ] as const
+        ).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`relative px-3 py-2.5 text-sm font-semibold transition-colors ${
+            className={`text-[20px] font-light leading-none transition-colors ${
               tab === id ? "text-text" : "text-muted hover:text-text"
             }`}
           >
             {label}
-            {tab === id && (
-              <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" />
-            )}
           </button>
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "versions" ? (
-          <div className="p-4">
+      <div className="flex min-h-0 flex-1 gap-5">
+        {}
+        <aside className="flex w-[240px] shrink-0 flex-col">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+            <div className="rounded-[16px] border-1 border-[#232427]/65 bg-card p-3">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                Установить в
+              </div>
+              <div className="truncate text-sm text-text">{build.name}</div>
+              <div className="mt-0.5 truncate text-[11px] text-[#818181]">
+                {build.mc_version} · {loaderLabel[build.loader] ?? build.loader}
+              </div>
+            </div>
+
+            {hit.categories.length > 0 && (
+              <div>
+                <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Категории
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {hit.categories.map((c) => (
+                    <span
+                      key={c}
+                      className="rounded-md bg-card px-2 py-1 text-[11px] capitalize text-muted"
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {links.some((l) => l.url) && (
+              <div>
+                <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Ссылки
+                </div>
+                <div className="space-y-1">
+                  {links
+                    .filter((l) => l.url)
+                    .map((l) => (
+                      <button
+                        key={l.label}
+                        onClick={() => openUrl(l.url!)}
+                        className="flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-left text-sm text-muted transition-colors hover:text-accent"
+                      >
+                        <i
+                          className={`${l.icon === "fa-discord" ? "fa-brands" : "fa-solid"} ${
+                            l.icon
+                          } w-4 text-center text-xs`}
+                        />
+                        <span className="truncate">{l.label}</span>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={onBack}
+            className="mt-3 flex h-10 items-center gap-2 rounded-[8px] px-3 text-sm text-muted transition-colors hover:text-text"
+          >
+            <i className="fa-solid fa-arrow-left text-xs" />
+            Назад
+          </button>
+        </aside>
+
+        {}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1 pb-4">
+          {tab === "versions" ? (
             <VersionList
               source={source}
               projectId={hit.project_id}
@@ -189,80 +259,40 @@ export default function ModDetail({
               busyId={verBusy}
               onPick={installVersion}
             />
-          </div>
-        ) : (
-          <>
-        {}
-        {gallery.length > 0 && (
-          <div className="flex gap-3 overflow-x-auto border-b border-border p-4">
-            {gallery.map((g, i) => (
-              <button
-                key={i}
-                onClick={() => setLightbox(i)}
-                title="Открыть"
-                className="group relative h-40 shrink-0 overflow-hidden rounded-lg border border-border"
-              >
-                <img
-                  src={g.url}
-                  alt={g.title ?? ""}
-                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                />
-                <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-                  <i className="fa-solid fa-magnifying-glass-plus text-white" />
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
+          ) : (
+            <>
+              {gallery.length > 0 && (
+                <div className="mb-4 flex gap-3 overflow-x-auto pb-1">
+                  {gallery.map((g, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setLightbox(i)}
+                      title="Открыть"
+                      className="group relative h-40 shrink-0 overflow-hidden rounded-[16px] border-1 border-[#232427]/65"
+                    >
+                      <img
+                        src={g.url}
+                        alt={g.title ?? ""}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                      <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                        <i className="fa-solid fa-magnifying-glass-plus text-white" />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-        <div className="p-5">
-          {}
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted">
-            <i className="fa-solid fa-cubes-stacked text-accent" />
-            Установить {kindLabel} в: <span className="text-text">{build.name}</span> ·{" "}
-            {build.mc_version} · {loaderLabel[build.loader] ?? build.loader}
-          </div>
-
-          {}
-          <p className="text-sm leading-relaxed text-text">{hit.description}</p>
-
-          {}
-          {hit.categories.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-1.5">
-              {hit.categories.map((c) => (
-                <span
-                  key={c}
-                  className="rounded-full border border-border px-2.5 py-1 text-xs capitalize text-muted"
-                >
-                  {c}
-                </span>
-              ))}
-            </div>
+              <div className="rounded-[16px] border-1 border-[#232427]/65 bg-card p-5">
+                <p className="text-sm leading-relaxed text-text">{hit.description}</p>
+                <p className="mt-5 text-xs text-muted">
+                  Полное описание и список изменений — на странице проекта (кнопка со стрелкой
+                  вверху). Версии — во вкладке «Версии».
+                </p>
+              </div>
+            </>
           )}
-
-          {}
-          <div className="mt-5 flex flex-wrap gap-2">
-            {links
-              .filter((l) => l.url)
-              .map((l) => (
-                <button
-                  key={l.label}
-                  onClick={() => openUrl(l.url!)}
-                  className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent/50 hover:text-accent"
-                >
-                  <i className={`${l.icon === "fa-discord" ? "fa-brands" : "fa-solid"} ${l.icon}`} />
-                  {l.label}
-                </button>
-              ))}
-          </div>
-
-          <p className="mt-6 text-xs text-muted">
-            Полное описание и changelog — на странице проекта (кнопка выше). Список версий — во
-            вкладке «Версии».
-          </p>
         </div>
-          </>
-        )}
       </div>
 
       {lightbox !== null && (

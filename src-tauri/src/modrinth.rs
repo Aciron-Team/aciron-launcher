@@ -1,6 +1,7 @@
 use crate::builds::{self, Build, InstalledMod};
 use crate::launcher::emit;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha512};
 use std::collections::HashSet;
 use std::path::Path;
 use tauri::AppHandle;
@@ -205,10 +206,29 @@ pub async fn install_modpack(
         .map_err(|e| e.to_string())?
         .bytes()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .to_vec();
+
+    build_from_mrpack(&app, &cl, bytes, &project_id).await
+}
+
+#[tauri::command]
+pub async fn import_mrpack(app: AppHandle, path: String) -> Result<Build, String> {
+    let cl = http()?;
+    emit(&app, "modpack", "Чтение файла модпака", 0, 1);
+    let bytes = std::fs::read(&path).map_err(|e| format!("Не удалось прочитать файл: {e}"))?;
+    build_from_mrpack(&app, &cl, bytes, "").await
+}
+
+async fn build_from_mrpack(
+    app: &AppHandle,
+    cl: &reqwest::Client,
+    bytes: Vec<u8>,
+    source_id: &str,
+) -> Result<Build, String> {
 
     let (build_id, build_dir, files_list) = {
-        let reader = std::io::Cursor::new(bytes.to_vec());
+        let reader = std::io::Cursor::new(bytes);
         let mut zip = zip::ZipArchive::new(reader).map_err(|e| e.to_string())?;
 
         let index_txt = {
@@ -266,8 +286,15 @@ pub async fn install_modpack(
     };
 
     let total = files_list.len() as u64;
+    let ckey = "legacy";
+    crate::cancel::reset(ckey);
     let mut mods_entries: Vec<InstalledMod> = Vec::new();
     for (i, f) in files_list.iter().enumerate() {
+        if crate::cancel::is_cancelled(ckey) {
+
+            let _ = builds::delete_build(build_id.clone());
+            return Err(crate::cancel::CANCELLED.into());
+        }
         if f["env"]["client"].as_str() == Some("unsupported") {
             continue;
         }
@@ -281,7 +308,12 @@ pub async fn install_modpack(
             .and_then(|u| u.as_str());
         if let Some(dl) = dl {
             let dest = build_dir.join(path);
-            let _ = download_to(&cl, dl, &dest).await;
+            if download_cancelable(cl, dl, &dest, ckey).await.is_err()
+                && crate::cancel::is_cancelled(ckey)
+            {
+                let _ = builds::delete_build(build_id.clone());
+                return Err(crate::cancel::CANCELLED.into());
+            }
             if path.starts_with("mods/") {
                 let filename = Path::new(path)
                     .file_name()
@@ -300,31 +332,35 @@ pub async fn install_modpack(
                 });
             }
         }
-        emit(&app, "modpack", "Загрузка модпака", (i + 1) as u64, total);
+        emit(app, "modpack", "Загрузка модпака", (i + 1) as u64, total);
     }
 
     let mut build = builds::get_build(&build_id).ok_or("Сборка не найдена")?;
     build.mods = mods_entries;
-    build.source_id = project_id.clone();
+    if !source_id.is_empty() {
+        build.source_id = source_id.to_string();
 
-    let (_title, icon) = project_title(&cl, &project_id).await;
-    if !icon.is_empty() {
-        build.icon_url = icon.clone();
-        let ext = icon
-            .rsplit('.')
-            .next()
-            .filter(|e| matches!(*e, "png" | "jpg" | "jpeg" | "webp" | "gif"))
-            .unwrap_or("png")
-            .to_string();
-        let filename = format!("cover.{ext}");
-        let dest = build_dir.join(&filename);
-        if download_to(&cl, &icon, &dest).await.is_ok() {
-            build.image = filename;
+        let (_title, icon) = project_title(cl, source_id).await;
+        if !icon.is_empty() {
+            build.icon_url = icon.clone();
+            let ext = icon
+                .rsplit('.')
+                .next()
+                .filter(|e| matches!(*e, "png" | "jpg" | "jpeg" | "webp" | "gif"))
+                .unwrap_or("png")
+                .to_string();
+            let filename = format!("cover.{ext}");
+            let dest = build_dir.join(&filename);
+            if download_to(cl, &icon, &dest).await.is_ok() {
+                build.image = filename;
+            }
         }
     }
 
+    let _ = enrich_local_mods(cl, &mut build, &build_id).await;
+
     builds::upsert_build(build.clone())?;
-    emit(&app, "done", "Модпак установлен", 1, 1);
+    emit(app, "done", "Модпак установлен", 1, 1);
     Ok(build)
 }
 
@@ -342,21 +378,100 @@ pub async fn modrinth_project(project_id: String) -> Result<Value, String> {
     resp.json::<Value>().await.map_err(|e| e.to_string())
 }
 
-async fn download_to(cl: &reqwest::Client, url: &str, path: &Path) -> Result<(), String> {
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await.map_err(|e| e.to_string())?;
+async fn enrich_local_mods(
+    cl: &reqwest::Client,
+    build: &mut Build,
+    build_id: &str,
+) -> Result<bool, String> {
+
+    let mut targets: Vec<(usize, String)> = Vec::new();
+    for (i, m) in build.mods.iter().enumerate() {
+        if !(m.project_id.starts_with("local:") || m.project_id.starts_with("mrpack:")) {
+            continue;
+        }
+        let path = builds::content_dir(build_id, &m.kind).join(&m.filename);
+        if let Ok(bytes) = std::fs::read(&path) {
+            targets.push((i, format!("{:x}", Sha512::digest(&bytes))));
+        }
     }
-    let bytes = cl
-        .get(url)
+    if targets.is_empty() {
+        return Ok(false);
+    }
+
+    let hashes: Vec<&str> = targets.iter().map(|(_, h)| h.as_str()).collect();
+    let resp: Value = cl
+        .post(format!("{API}/version_files"))
+        .json(&json!({ "hashes": hashes, "algorithm": "sha512" }))
         .send()
         .await
         .map_err(|e| e.to_string())?
-        .bytes()
+        .json()
         .await
         .map_err(|e| e.to_string())?;
-    tokio::fs::write(path, &bytes)
-        .await
-        .map_err(|e| e.to_string())
+
+    let mut changed = false;
+    for (i, h) in &targets {
+        let ver = match resp.get(h) {
+            Some(v) if v.is_object() => v,
+            _ => continue,
+        };
+        let pid = ver["project_id"].as_str().unwrap_or("").to_string();
+        if pid.is_empty() {
+            continue;
+        }
+        let vid = ver["id"].as_str().unwrap_or("").to_string();
+        let (title, icon) = project_title(cl, &pid).await;
+        let m = &mut build.mods[*i];
+        m.project_id = pid;
+        m.version_id = vid;
+        m.name = title;
+        m.icon_url = icon;
+        changed = true;
+    }
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn match_local_mods(build_id: String) -> Result<Build, String> {
+    let mut build = builds::get_build(&build_id).ok_or("Сборка не найдена")?;
+    let cl = http()?;
+    if enrich_local_mods(&cl, &mut build, &build_id).await? {
+        builds::upsert_build(build.clone())?;
+    }
+    Ok(build)
+}
+
+async fn download_to(cl: &reqwest::Client, url: &str, path: &Path) -> Result<(), String> {
+    download_cancelable(cl, url, path, "").await
+}
+
+async fn download_cancelable(
+    cl: &reqwest::Client,
+    url: &str,
+    path: &Path,
+    cancel_key: &str,
+) -> Result<(), String> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    if let Some(p) = path.parent() {
+        tokio::fs::create_dir_all(p).await.map_err(|e| e.to_string())?;
+    }
+    let resp = cl.get(url).send().await.map_err(|e| e.to_string())?;
+    let mut stream = resp.bytes_stream();
+    let mut file = tokio::fs::File::create(path).await.map_err(|e| e.to_string())?;
+
+    while let Some(chunk) = stream.next().await {
+        if !cancel_key.is_empty() && crate::cancel::is_cancelled(cancel_key) {
+            drop(stream);
+            drop(file);
+            let _ = tokio::fs::remove_file(path).await;
+            return Err(crate::cancel::CANCELLED.into());
+        }
+        let bytes = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    }
+    file.flush().await.map_err(|e| e.to_string())
 }
 
 async fn best_version(
@@ -383,6 +498,44 @@ async fn best_version(
         .map_err(|e| e.to_string())?;
 
     Ok(versions.as_array().and_then(|a| a.first().cloned()))
+}
+
+#[tauri::command]
+pub async fn check_build_updates(build_id: String) -> Result<Vec<String>, String> {
+    use futures::StreamExt;
+
+    let build = builds::get_build(&build_id).ok_or("Сборка не найдена")?;
+    let cl = http()?;
+    let loader = build.loader.clone();
+    let mc = build.mc_version.clone();
+
+    let mut targets: Vec<(String, String, bool)> = Vec::new();
+    for m in &build.mods {
+        let pid = m.project_id.as_str();
+        if pid.starts_with("local:") || pid.starts_with("mrpack:") || pid.starts_with("cf:") {
+            continue;
+        }
+        targets.push((m.project_id.clone(), m.version_id.clone(), m.kind == "mod"));
+    }
+
+    let tasks = targets.into_iter().map(|(pid, installed, is_mod)| {
+        let cl = cl.clone();
+        let loader = loader.clone();
+        let mc = mc.clone();
+        async move {
+            let filter = if is_mod { Some(loader.as_str()) } else { None };
+            match best_version(&cl, &pid, filter, &mc).await {
+                Ok(Some(v)) => {
+                    let latest = v["id"].as_str().unwrap_or_default();
+                    (!latest.is_empty() && latest != installed).then_some(pid)
+                }
+                _ => None,
+            }
+        }
+    });
+
+    let found: Vec<Option<String>> = futures::stream::iter(tasks).buffer_unordered(8).collect().await;
+    Ok(found.into_iter().flatten().collect())
 }
 
 async fn project_kind(cl: &reqwest::Client, project_id: &str) -> String {
@@ -427,6 +580,9 @@ pub async fn modrinth_install(build_id: String, project_id: String) -> Result<Bu
     let loader = build.loader.clone();
     let mc = build.mc_version.clone();
     let cl = http()?;
+
+    let ckey = format!("mod:{project_id}");
+    crate::cancel::reset(&ckey);
 
     let kind = project_kind(&cl, &project_id).await;
     let is_mod = kind == "mod";
@@ -478,7 +634,10 @@ pub async fn modrinth_install(build_id: String, project_id: String) -> Result<Bu
         };
 
         let dest_dir = if is_root { dir.clone() } else { builds::mods_dir(&build_id) };
-        download_to(&cl, &url, &dest_dir.join(&filename)).await?;
+        if crate::cancel::is_cancelled(&ckey) {
+            return Err(crate::cancel::CANCELLED.into());
+        }
+        download_cancelable(&cl, &url, &dest_dir.join(&filename), &ckey).await?;
 
         let version_id = ver["id"].as_str().unwrap_or("").to_string();
         let (title, icon) = project_title(&cl, &pid).await;

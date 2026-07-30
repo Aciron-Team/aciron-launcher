@@ -7,7 +7,7 @@ use tauri::AppHandle;
 const API: &str = "https://api.modpacks.ch/public";
 
 fn cf_proxy() -> String {
-    std::env::var("ACIRON_CF_PROXY").unwrap_or_else(|_| "https://api.aciron.pro".to_string())
+    crate::curseforge::proxy_base()
 }
 
 fn http() -> Result<reqwest::Client, String> {

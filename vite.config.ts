@@ -11,7 +11,9 @@ export default defineConfig({
     strictPort: true,
 
     watch: {
-      ignored: ["**/src-tauri/**"],
+
+      ignored: ["**/src-tauri/**", "**/src/assets/**"],
+      awaitWriteFinish: { stabilityThreshold: 400, pollInterval: 60 },
     },
   },
 });

@@ -1,11 +1,93 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tauri::AppHandle;
 
 pub fn launcher_root() -> PathBuf {
     let base = dirs::config_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."));
     base.join(".acironlauncher")
+}
+
+pub fn data_root() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if is_writable(dir) {
+                return dir.to_path_buf();
+            }
+        }
+    }
+    launcher_root()
+}
+
+fn is_writable(dir: &Path) -> bool {
+    let probe = dir.join(".aciron_write_test");
+    match std::fs::write(&probe, b"") {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+const DATA_FILES: [&str; 5] = [
+    "settings.json",
+    "accounts.json",
+    "builds.json",
+    "installed.json",
+    "recents.json",
+];
+
+#[tauri::command]
+pub fn data_migration_pending() -> bool {
+    let old = launcher_root();
+    let new = data_root();
+    if old == new {
+        return false;
+    }
+    DATA_FILES
+        .iter()
+        .any(|f| old.join(f).exists() && !new.join(f).exists())
+}
+
+#[tauri::command]
+pub async fn migrate_data(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || migrate_data_blocking(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn migrate_data_blocking(app: &AppHandle) -> Result<(), String> {
+    let old = launcher_root();
+    let new = data_root();
+    if old == new {
+        return Ok(());
+    }
+    let pending: Vec<&str> = DATA_FILES
+        .iter()
+        .copied()
+        .filter(|f| old.join(f).exists() && !new.join(f).exists())
+        .collect();
+    let total = (pending.len() as u64).max(1);
+    crate::launcher::emit(app, "modpack", "Перенос данных", 0, total);
+
+    std::fs::create_dir_all(&new).map_err(|e| e.to_string())?;
+    let mut done = 0u64;
+    for f in &pending {
+        let src = old.join(f);
+        let dst = new.join(f);
+
+        if std::fs::rename(&src, &dst).is_err() {
+            std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&src);
+        }
+        done += 1;
+        crate::launcher::emit(app, "modpack", "Перенос данных", done, total);
+    }
+
+    crate::launcher::emit(app, "done", "Данные перенесены", 1, 1);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +127,16 @@ pub struct Settings {
 
     #[serde(default)]
     pub fullscreen: bool,
+
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: u32,
+
+    #[serde(default = "default_true")]
+    pub notify_sound: bool,
+}
+
+fn default_ui_scale() -> u32 {
+    100
 }
 
 fn default_true() -> bool {
@@ -70,12 +162,14 @@ impl Default for Settings {
             jvm_args: String::new(),
             auto_update_check: true,
             fullscreen: false,
+            ui_scale: 100,
+            notify_sound: true,
         }
     }
 }
 
 fn settings_file() -> PathBuf {
-    launcher_root().join("settings.json")
+    data_root().join("settings.json")
 }
 
 pub fn ensure_dirs(s: &Settings) {
@@ -205,12 +299,89 @@ fn total_ram_gb() -> f64 {
 }
 
 #[tauri::command]
+pub fn total_ram_mb() -> u32 {
+    (total_ram_gb() * 1024.0).round() as u32
+}
+
+#[tauri::command]
 pub fn hardware_capable() -> bool {
     let ram = total_ram_gb();
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
     ram >= 8.0 && cores >= 4
+}
+
+#[derive(serde::Deserialize)]
+pub struct MovePair {
+    pub from: String,
+    pub to: String,
+}
+
+#[tauri::command]
+pub async fn move_directories(app: AppHandle, moves: Vec<MovePair>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || move_directories_blocking(&app, moves))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn move_directories_blocking(app: &AppHandle, moves: Vec<MovePair>) -> Result<(), String> {
+
+    let mut total = 0u64;
+    for m in &moves {
+        let from = PathBuf::from(&m.from);
+        if from == PathBuf::from(&m.to) || !from.exists() {
+            continue;
+        }
+        if let Ok(rd) = std::fs::read_dir(&from) {
+            total += rd.flatten().count() as u64;
+        }
+    }
+    let total = total.max(1);
+    let mut done = 0u64;
+    crate::launcher::emit(app, "modpack", "Перенос файлов", 0, total);
+
+    for m in &moves {
+        let from = PathBuf::from(&m.from);
+        let to = PathBuf::from(&m.to);
+        if from == to || !from.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(&to).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(&from).map_err(|e| e.to_string())?.flatten() {
+            let src = entry.path();
+            let dst = to.join(entry.file_name());
+
+            if std::fs::rename(&src, &dst).is_err() {
+                if src.is_dir() {
+                    copy_dir_all(&src, &dst)?;
+                    let _ = std::fs::remove_dir_all(&src);
+                } else {
+                    std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+                    let _ = std::fs::remove_file(&src);
+                }
+            }
+            done += 1;
+            crate::launcher::emit(app, "modpack", "Перенос файлов", done, total);
+        }
+    }
+
+    crate::launcher::emit(app, "done", "Файлы перенесены", 1, 1);
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
+        let s = entry.path();
+        let d = dst.join(entry.file_name());
+        if s.is_dir() {
+            copy_dir_all(&s, &d)?;
+        } else {
+            std::fs::copy(&s, &d).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

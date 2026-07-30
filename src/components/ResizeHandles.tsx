@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useMaximized } from "../windowState";
 
 type Dir =
   | "East"
@@ -31,16 +31,7 @@ const HANDLES: { cls: string; dir: Dir }[] = [
 ];
 
 export default function ResizeHandles() {
-  const [maximized, setMaximized] = useState(false);
-
-  useEffect(() => {
-    if (!win) return;
-    win.isMaximized().then(setMaximized).catch(() => {});
-    const unlisten = win.onResized(() => win.isMaximized().then(setMaximized).catch(() => {}));
-    return () => {
-      unlisten.then((f) => f()).catch(() => {});
-    };
-  }, []);
+  const maximized = useMaximized();
 
   if (!win || maximized) return null;
 

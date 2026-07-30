@@ -1,45 +1,75 @@
-use crate::settings::{self, launcher_root, Settings};
+use crate::settings::{self, Settings};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::Child;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
 };
 use tauri::{AppHandle, Emitter};
 
-fn game_slot() -> &'static Mutex<Option<Child>> {
-    static SLOT: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
+struct RunningGame {
+    id: String,
+    pid: u32,
 }
 
-/// Останавливает (закрывает) запущенную игру вместе со всем деревом процессов.
-#[tauri::command]
-pub fn stop_game(app: AppHandle) -> Result<(), String> {
-    crate::discord::set_idle();
-    if let Ok(mut slot) = game_slot().lock() {
-        if let Some(mut child) = slot.take() {
-            let pid = child.id();
-            // На Windows javaw может держать дочерние процессы — бьём по всему дереву.
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                    .status();
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = pid; // kill() ниже достаточно
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+fn running_games() -> &'static Mutex<Vec<RunningGame>> {
+    static R: OnceLock<Mutex<Vec<RunningGame>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn register_game(id: &str, pid: u32) {
+    if let Ok(mut v) = running_games().lock() {
+        v.push(RunningGame { id: id.to_string(), pid });
     }
-    let _ = app.emit("game-exited", ());
+}
+
+/// Убирает игру по pid из реестра, возвращает число оставшихся запущенных.
+fn unregister_game(pid: u32) -> usize {
+    match running_games().lock() {
+        Ok(mut v) => {
+            v.retain(|g| g.pid != pid);
+            v.len()
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Убивает процесс вместе со всем деревом дочерних процессов.
+fn kill_pid_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .arg("-9")
+            .arg(pid.to_string())
+            .status();
+    }
+}
+
+/// Останавливает запущенную игру. `id` = "build:<id>"/версия; None — закрыть все.
+/// Событие `game-exited` эмитит монитор-поток при обнаружении завершения.
+#[tauri::command]
+pub fn stop_game(id: Option<String>) -> Result<(), String> {
+    let pids: Vec<u32> = match running_games().lock() {
+        Ok(v) => v
+            .iter()
+            .filter(|g| id.as_deref().map_or(true, |i| g.id == i))
+            .map(|g| g.pid)
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    for pid in pids {
+        kill_pid_tree(pid);
+    }
     Ok(())
 }
 
@@ -339,6 +369,7 @@ async fn prepare_and_launch(
     loader: Option<&str>,
     server: Option<&str>,
     build_id: Option<String>,
+    build_name: Option<&str>,
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent("AcironLauncher/0.1")
@@ -523,6 +554,7 @@ async fn prepare_and_launch(
                     version,
                     &root,
                     &libraries_dir,
+                    &version_dir,
                     &java,
                     app,
                 )
@@ -612,10 +644,15 @@ async fn prepare_and_launch(
     for a in settings.jvm_args.split_whitespace() {
         args.push(a.to_string());
     }
-    // Aciron Skins: свой java-агент. Тянет скины лицензионных аккаунтов Mojang
-    // по нику игрока и показывает их в игре — в т.ч. на пиратке. Сервер не нужен.
+    // Aciron Skins: свой java-агент. Показывает в игре скин и плащ из гардероба
+    // Aciron ID (аргумент — адрес сервиса), а если их нет — скин лицензионного
+    // аккаунта Mojang по нику. Работает и на пиратке, свой сервер не нужен.
     if let Some(jar) = ensure_aciron_skins(&root) {
-        args.push(format!("-javaagent:{}", jar.to_string_lossy()));
+        args.push(format!(
+            "-javaagent:{}={}",
+            jar.to_string_lossy(),
+            crate::aciron::base()
+        ));
     }
     // JVM-аргументы загрузчика модов (например -DFabricMcEmu) — до -cp и main class.
     args.extend(loader_jvm_args);
@@ -689,59 +726,75 @@ async fn prepare_and_launch(
     let child = cmd
         .spawn()
         .map_err(|e| format!("Не удалось запустить Java: {e}"))?;
+    let pid = child.id();
 
-    // сохраняем процесс, чтобы его можно было закрыть, и следим за завершением
-    if let Ok(mut slot) = game_slot().lock() {
-        *slot = Some(child);
-    }
-    let _ = app.emit("game-started", ());
+    // Идентификатор игры (для остановки/событий). Несколько игр — одновременно.
+    let game_id = match &build_id {
+        Some(b) => format!("build:{b}"),
+        None => version.to_string(),
+    };
+    register_game(&game_id, pid);
+    // Последние запуски (карточки на главной странице).
+    crate::recents::touch(
+        &game_id,
+        if build_id.is_some() { "build" } else { "version" },
+        build_name.filter(|n| !n.is_empty()).unwrap_or(version),
+        version,
+    );
+    let _ = app.emit("game-started", serde_json::json!({ "id": game_id }));
     emit(app, "done", "Игра запущена", 1, 1);
+
+    // Присутствие Aciron ID: отмечаем, что играем (сборка/версия + лог для сервера).
+    crate::presence::set_playing(version, build_name.unwrap_or(""), log_path.clone());
 
     let app2 = app.clone();
     let started = std::time::Instant::now();
     let track_build = build_id.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(700));
-        let mut slot = match game_slot().lock() {
-            Ok(s) => s,
-            Err(_) => break,
-        };
-        match slot.as_mut() {
-            Some(child) => match child.try_wait() {
-                Ok(Some(status)) => {
-                    *slot = None;
-                    drop(slot);
-                    // Ранний выход с ошибкой = вероятно краш. Показываем хвост лога.
-                    let crashed = !status.success() && started.elapsed().as_secs() < 40;
-                    if crashed {
-                        let tail = log_tail(&log_path, 1600);
-                        let msg = if tail.is_empty() {
-                            "Игра неожиданно закрылась. Смотрите logs/aciron-latest.log.".to_string()
-                        } else {
-                            format!("Игра закрылась с ошибкой:\n{tail}")
-                        };
-                        emit(&app2, "error", &msg, 0, 1);
-                    }
-                    if let Some(bid) = &track_build {
-                        crate::builds::add_playtime(bid, started.elapsed().as_secs());
-                    }
-                    crate::discord::set_idle();
-                    let _ = app2.emit("game-exited", ());
-                    break;
-                }
-                Err(_) => {
-                    *slot = None;
-                    drop(slot);
-                    if let Some(bid) = &track_build {
-                        crate::builds::add_playtime(bid, started.elapsed().as_secs());
-                    }
-                    crate::discord::set_idle();
-                    let _ = app2.emit("game-exited", ());
-                    break;
-                }
-                Ok(None) => {}
-            },
-            None => break, // процесс закрыли через stop_game
+    let game_id2 = game_id.clone();
+    let log_path2 = log_path.clone();
+    // Если активен аккаунт Aciron ID — по завершении сессии отправим налёт в ЛК.
+    let aciron_token = crate::accounts::active_account()
+        .map(|a| a.aciron_token)
+        .filter(|t| !t.is_empty());
+
+    // Каждая игра — свой монитор-поток, владеющий своим Child.
+    std::thread::spawn(move || {
+        let mut child = child;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            let success = match child.try_wait() {
+                Ok(Some(status)) => status.success(),
+                Ok(None) => continue,
+                Err(_) => false,
+            };
+
+            // Ранний выход с ошибкой = вероятно краш. Показываем хвост лога.
+            if !success && started.elapsed().as_secs() < 40 {
+                let tail = log_tail(&log_path2, 1600);
+                let msg = if tail.is_empty() {
+                    "Игра неожиданно закрылась. Смотрите logs/aciron-latest.log.".to_string()
+                } else {
+                    format!("Игра закрылась с ошибкой:\n{tail}")
+                };
+                emit(&app2, "error", &msg, 0, 1);
+            }
+            if let Some(bid) = &track_build {
+                crate::builds::add_playtime(bid, started.elapsed().as_secs());
+            }
+            crate::recents::add_playtime(&game_id2, started.elapsed().as_secs());
+            if let Some(tok) = aciron_token.clone() {
+                tauri::async_runtime::spawn(crate::aciron::add_playtime(
+                    tok,
+                    started.elapsed().as_secs(),
+                ));
+            }
+            // Discord/присутствие сбрасываем только когда не осталось запущенных игр.
+            if unregister_game(pid) == 0 {
+                crate::discord::set_idle();
+                crate::presence::set_stopped();
+            }
+            let _ = app2.emit("game-exited", serde_json::json!({ "id": game_id2 }));
+            break;
         }
     });
 
@@ -760,7 +813,21 @@ struct Identity {
 /// Для Microsoft тихо обновляет сессию через refresh-токен.
 async fn resolve_identity(settings: &Settings) -> Result<Identity, String> {
     match crate::accounts::active_account() {
-        Some(a) if a.kind == "microsoft" => {
+        // Microsoft, либо аккаунт Aciron ID с привязанной лицензией — реальная авторизация.
+        Some(a) if a.kind == "microsoft" || (a.kind == "aciron" && a.licensed) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            // Кэш: токен Minecraft ещё валиден (с запасом 5 мин) — не дёргаем Microsoft.
+            if !a.access_token.is_empty() && a.access_token != "0" && now + 300 < a.token_expires {
+                return Ok(Identity {
+                    name: a.username.clone(),
+                    uuid: a.uuid.clone(),
+                    token: a.access_token.clone(),
+                    user_type: "msa".into(),
+                });
+            }
             let fresh = crate::microsoft::refresh_account(&a.refresh_token).await?;
             crate::accounts::update_tokens(
                 &a.id,
@@ -768,6 +835,7 @@ async fn resolve_identity(settings: &Settings) -> Result<Identity, String> {
                 &fresh.refresh_token,
                 &fresh.uuid,
                 &fresh.username,
+                fresh.token_expires,
             );
             Ok(Identity {
                 name: fresh.username,
@@ -905,7 +973,7 @@ pub struct InstalledVersion {
 }
 
 fn installed_file() -> PathBuf {
-    launcher_root().join("installed.json")
+    settings::data_root().join("installed.json")
 }
 
 fn read_installed() -> Vec<InstalledVersion> {
@@ -1015,7 +1083,8 @@ pub async fn launch_game(
     server: Option<String>,
 ) -> Result<(), String> {
     let settings = settings::load_settings();
-    let res = prepare_and_launch(&app, &settings, &version, None, None, server.as_deref(), None).await;
+    let res =
+        prepare_and_launch(&app, &settings, &version, None, None, server.as_deref(), None, None).await;
     match &res {
         Ok(_) => {
 
@@ -1049,6 +1118,7 @@ pub async fn launch_build(app: AppHandle, build_id: String) -> Result<(), String
         Some(&loader),
         None,
         Some(build_id.clone()),
+        Some(&build.name),
     )
     .await;
     match &res {

@@ -4,6 +4,7 @@ export default function ConfirmModal({
   title = "Подтверждение",
   message,
   confirmLabel = "Удалить",
+  confirmIcon = "fa-trash-can",
   danger = true,
   onConfirm,
   onClose,
@@ -11,6 +12,7 @@ export default function ConfirmModal({
   title?: string;
   message: string;
   confirmLabel?: string;
+  confirmIcon?: string;
   danger?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -31,13 +33,13 @@ export default function ConfirmModal({
               onConfirm();
               onClose();
             }}
-            className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold text-white transition-colors ${
+            className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition-colors ${
               danger
-                ? "bg-[#ef4444] hover:bg-[#dc2626] active:bg-[#b91c1c]"
-                : "bg-accent text-bg hover:bg-accent-hover"
+                ? "bg-[#ef4444] text-white hover:bg-[#dc2626] active:bg-[#b91c1c]"
+                : "bg-accent text-bg hover:bg-accent-hover active:bg-accent-active"
             }`}
           >
-            <i className="fa-solid fa-trash-can text-xs" />
+            <i className={`fa-solid ${confirmIcon} text-xs`} />
             {confirmLabel}
           </button>
         </div>

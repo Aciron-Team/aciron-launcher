@@ -16,6 +16,10 @@ export type Settings = {
   jvm_args: string;
   auto_update_check: boolean;
   fullscreen: boolean;
+
+  ui_scale: number;
+
+  notify_sound: boolean;
 };
 
 export const isTauri =
@@ -37,6 +41,8 @@ const mockSettings: Settings = {
   jvm_args: "",
   auto_update_check: true,
   fullscreen: false,
+  ui_scale: 100,
+  notify_sound: true,
 };
 
 export async function getSettings(): Promise<Settings> {
@@ -62,6 +68,11 @@ export async function detectJava(): Promise<string> {
 export async function hardwareCapable(): Promise<boolean> {
   if (!isTauri) return true;
   return invoke<boolean>("hardware_capable");
+}
+
+export async function totalRamMb(): Promise<number> {
+  if (!isTauri) return 16384;
+  return invoke<number>("total_ram_mb");
 }
 
 export async function pickFolder(defaultPath?: string): Promise<string | null> {
@@ -90,6 +101,21 @@ export async function pickFile(
 export async function openFolder(path: string): Promise<void> {
   if (!isTauri) return;
   await invoke("open_folder", { path });
+}
+
+export async function moveDirectories(moves: { from: string; to: string }[]): Promise<void> {
+  if (!isTauri) return;
+  await invoke("move_directories", { moves });
+}
+
+export async function dataMigrationPending(): Promise<boolean> {
+  if (!isTauri) return false;
+  return invoke<boolean>("data_migration_pending");
+}
+
+export async function migrateData(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("migrate_data");
 }
 
 export async function openUrl(url: string): Promise<void> {
@@ -163,7 +189,7 @@ export async function serverStatus(address: string, force = false): Promise<Serv
   }
 }
 
-export type AccountType = "offline" | "microsoft";
+export type AccountType = "offline" | "microsoft" | "aciron";
 
 export type Account = {
   id: string;
@@ -172,7 +198,17 @@ export type Account = {
   type: AccountType;
   access_token: string;
   skin_url: string;
+
+  aciron_name?: string;
+
+  licensed?: boolean;
 };
+
+const ID_URL = import.meta.env.VITE_ACIRON_ID_URL || "https://example.invalid";
+
+export const ACIRON_ID_WEB = ID_URL;
+
+export const ACIRON_ID_API = ID_URL;
 
 export type AccountsState = { accounts: Account[]; active: string };
 
@@ -183,6 +219,10 @@ const mockAccounts: AccountsState = {
   ],
   active: "1",
 };
+
+export function accountsChanged() {
+  window.dispatchEvent(new Event("aciron-account"));
+}
 
 export async function getAccounts(): Promise<AccountsState> {
   if (!isTauri) return { ...mockAccounts };
@@ -204,14 +244,333 @@ export async function addMicrosoftAccount(): Promise<Account> {
   return invoke<Account>("add_microsoft_account");
 }
 
+export async function acironLogin(
+  login: string,
+  password: string,
+  code?: string
+): Promise<Account> {
+  if (!isTauri) {
+    return {
+      id: String(Date.now()),
+      username: login,
+      uuid: "",
+      type: "aciron",
+      access_token: "0",
+      skin_url: "",
+      aciron_name: login,
+      licensed: false,
+    };
+  }
+  const acc = await invoke<Account>("aciron_login", { login, password, code });
+  accountsChanged();
+  return acc;
+}
+
+export async function acironRegister(
+  username: string,
+  email: string,
+  password: string
+): Promise<string> {
+  if (!isTauri) return email;
+  return invoke<string>("aciron_register", { username, email, password });
+}
+
+export async function acironVerifyEmail(email: string, code: string): Promise<Account> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  const acc = await invoke<Account>("aciron_verify_email", { email, code });
+  accountsChanged();
+  return acc;
+}
+
+export async function acironResendCode(email: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("aciron_resend_code", { email });
+}
+
+export async function acironLinkLicense(accountId: string): Promise<Account> {
+  if (!isTauri) {
+    await new Promise((r) => setTimeout(r, 1500));
+    throw new Error("нет бэкенда");
+  }
+  return invoke<Account>("aciron_link_license", { accountId });
+}
+
 export async function removeAccount(id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("remove_account", { id });
+  accountsChanged();
 }
 
 export async function setActiveAccount(id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("set_active_account", { id });
+  accountsChanged();
+}
+
+export type PresenceStatus = "online" | "idle" | "dnd" | "invisible";
+
+export type PresenceState = "online" | "idle" | "dnd" | "offline";
+
+export type FriendPresence = {
+  state: PresenceState;
+
+  inLauncher?: boolean;
+  inGame?: boolean;
+  mcVersion?: string | null;
+  buildName?: string | null;
+  server?: string | null;
+};
+
+export type Friend = {
+  id: string;
+  username: string;
+  hasSkin: boolean;
+  presence: FriendPresence;
+};
+
+export type PendingUser = { id: string; username: string; hasSkin: boolean };
+
+export type FriendsData = {
+  me: { status: PresenceStatus; acceptRequests: boolean };
+  friends: Friend[];
+  incoming: PendingUser[];
+  outgoing: PendingUser[];
+};
+
+const mockFriends: FriendsData = {
+  me: { status: "online", acceptRequests: true },
+  friends: [
+    {
+      id: "f1",
+      username: "DrG4st3r",
+      hasSkin: false,
+      presence: { state: "online", inLauncher: true, inGame: true, mcVersion: "1.21.2", buildName: "SkyBlock" },
+    },
+    {
+      id: "f2",
+      username: "Stralitz",
+      hasSkin: false,
+      presence: { state: "idle", inLauncher: true },
+    },
+    { id: "f3", username: "PoS1tiveOnlyMe", hasSkin: false, presence: { state: "offline" } },
+  ],
+  incoming: [{ id: "f4", username: "Notch", hasSkin: false }],
+  outgoing: [],
+};
+
+export async function friendsList(): Promise<FriendsData> {
+  if (!isTauri) return structuredClone(mockFriends);
+  return invoke<FriendsData>("friends_list");
+}
+
+export async function friendRequest(username: string): Promise<"requested" | "accepted"> {
+  if (!isTauri) return "requested";
+  return invoke<"requested" | "accepted">("friend_request", { username });
+}
+
+export async function friendRespond(user_id: string, accept: boolean): Promise<void> {
+  if (!isTauri) return;
+  await invoke("friend_respond", { userId: user_id, accept });
+}
+
+export async function friendCancel(user_id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("friend_cancel", { userId: user_id });
+}
+
+export async function friendRemove(user_id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("friend_remove", { userId: user_id });
+}
+
+export async function setPresenceStatus(status: PresenceStatus): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_presence_status", { status });
+}
+
+export async function setAcceptRequests(enabled: boolean): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_accept_requests", { enabled });
+}
+
+export async function setPresencePrivacy(showGame: boolean, showServer: boolean): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_presence_privacy", { showGame, showServer });
+}
+
+export type SkinModelId = "classic" | "slim";
+
+export type WardrobeItem = {
+  id: string;
+  kind: "skin" | "cape";
+  name: string;
+  model: SkinModelId;
+
+  url: string;
+  createdAt: number;
+};
+
+export type Outfit = {
+  id: string;
+  name: string;
+  skinId: string | null;
+  capeId: string | null;
+  model: SkinModelId;
+  createdAt: number;
+};
+
+export type WardrobeData = {
+  skins: WardrobeItem[];
+  capes: WardrobeItem[];
+  outfits: Outfit[];
+  active: {
+    skinId: string | null;
+
+    skinCatalogId: string | null;
+    capeId: string | null;
+
+    capeCatalogId: string | null;
+    model: SkinModelId;
+    hasSkin: boolean;
+    hasCape: boolean;
+  };
+  licensed: boolean;
+};
+
+export type ApplyResult = { synced: boolean; error?: string | null };
+
+export function textureUrl(item: Pick<WardrobeItem, "url">): string {
+  return `${ACIRON_ID_API}${item.url}`;
+}
+
+export function activeSkinUrl(nick: string, bust = 0): string {
+  return `${ACIRON_ID_API}/skins/${encodeURIComponent(nick.toLowerCase())}.png?v=${bust}`;
+}
+export function activeCapeUrl(nick: string, bust = 0): string {
+  return `${ACIRON_ID_API}/capes/${encodeURIComponent(nick.toLowerCase())}.png?v=${bust}`;
+}
+
+export async function wardrobeList(): Promise<WardrobeData> {
+  if (!isTauri) {
+    return {
+      skins: [],
+      capes: [],
+      outfits: [],
+      active: {
+        skinId: null,
+        skinCatalogId: null,
+        capeId: null,
+        capeCatalogId: null,
+        model: "classic",
+        hasSkin: false,
+        hasCape: false,
+      },
+      licensed: false,
+    };
+  }
+  return invoke<WardrobeData>("wardrobe_list");
+}
+
+export async function wardrobeAdd(
+  path: string,
+  kind: "skin" | "cape",
+  name: string,
+  model: SkinModelId = "classic"
+): Promise<WardrobeItem> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<WardrobeItem>("wardrobe_add", { path, kind, name, model });
+}
+
+export async function readTexture(path: string): Promise<string> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<string>("read_texture", { path });
+}
+
+export const MAX_SKINS = 10;
+
+export async function wardrobeApply(id: string): Promise<ApplyResult> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<ApplyResult>("wardrobe_apply", { id });
+}
+
+export async function wardrobeDelete(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("wardrobe_delete", { id });
+}
+
+export async function wardrobeRename(
+  id: string,
+  name: string,
+  model: SkinModelId
+): Promise<void> {
+  if (!isTauri) return;
+  await invoke("wardrobe_rename", { id, name, model });
+}
+
+export async function wardrobeCapeOff(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("wardrobe_cape_off");
+}
+
+export type CatalogCape = { id: string; name: string; url: string; by: string };
+
+export async function capeCatalog(): Promise<CatalogCape[]> {
+  if (!isTauri) return [];
+  return invoke<CatalogCape[]>("cape_catalog");
+}
+
+export async function capeCatalogApply(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cape_catalog_apply", { id });
+}
+
+export type CatalogSkin = { id: string; name: string; url: string; model: SkinModelId };
+
+export async function skinCatalog(): Promise<CatalogSkin[]> {
+  if (!isTauri) return [];
+  return invoke<CatalogSkin[]>("skin_catalog");
+}
+
+export async function skinCatalogApply(id: string): Promise<ApplyResult> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<ApplyResult>("skin_catalog_apply", { id });
+}
+
+export type LicenseCape = { id: string; name: string; url: string; active: boolean };
+export type LicenseCapes = { linked: boolean; capes: LicenseCape[] };
+
+export async function licenseCapes(): Promise<LicenseCapes> {
+  if (!isTauri) return { linked: false, capes: [] };
+  return invoke<LicenseCapes>("license_capes");
+}
+
+export async function licenseCapeApply(cape_id: string | null): Promise<void> {
+  if (!isTauri) return;
+  await invoke("license_cape_apply", { capeId: cape_id });
+}
+
+export async function outfitAdd(
+  name: string,
+  skin_id: string | null,
+  cape_id: string | null,
+  model: SkinModelId
+): Promise<Outfit> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Outfit>("outfit_add", { name, skinId: skin_id, capeId: cape_id, model });
+}
+
+export async function outfitApply(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("outfit_apply", { id });
+}
+
+export async function outfitDelete(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("outfit_delete", { id });
+}
+
+export function friendSkinUrl(f: { username: string; hasSkin: boolean }): string {
+  return f.hasSkin ? `${ACIRON_ID_API}/skins/${encodeURIComponent(f.username.toLowerCase())}.png` : "";
 }
 
 export type InstalledVersion = { id: string; type: string };
@@ -248,6 +607,36 @@ export async function removeInstalledVersion(id: string): Promise<void> {
     return;
   }
   await invoke("remove_installed_version", { id });
+}
+
+export type Recent = {
+
+  id: string;
+
+  kind: string;
+  name: string;
+  mc_version: string;
+
+  last_played: number;
+  playtime_secs: number;
+};
+
+export async function getRecents(): Promise<Recent[]> {
+  if (!isTauri) {
+
+    const now = Date.now() / 1000;
+    return [
+      { id: "26.2", kind: "version", name: "26.2", mc_version: "26.2", last_played: now - 3600, playtime_secs: 5 * 3600 },
+      { id: "build:demo", kind: "build", name: "Сборка SkyBlock", mc_version: "1.21.1", last_played: now - 86400, playtime_secs: 511 * 3600 },
+      { id: "1.12.2", kind: "version", name: "1.12.2", mc_version: "1.12.2", last_played: now - 3 * 86400, playtime_secs: 40 },
+    ];
+  }
+  return invoke<Recent[]>("get_recents");
+}
+
+export async function removeRecent(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("remove_recent", { id });
 }
 
 export type VersionInfo = { id: string; type: string; release_time: string };
@@ -298,6 +687,8 @@ export type Build = {
   mods: InstalledMod[];
   created: number;
   dir: string;
+
+  banner: string;
   image: string;
   icon_url: string;
   playtime_secs: number;
@@ -310,7 +701,7 @@ export async function getBuilds(): Promise<Build[]> {
 
 export async function createBuild(name: string, mc_version: string, loader: Loader): Promise<Build> {
   if (!isTauri) {
-    return { id: String(Date.now()), name, mc_version, loader, loader_version: "", mods: [], created: Date.now() / 1000, dir: "", image: "", icon_url: "", playtime_secs: 0 };
+    return { id: String(Date.now()), name, mc_version, loader, loader_version: "", mods: [], created: Date.now() / 1000, dir: "", banner: "", image: "", icon_url: "", playtime_secs: 0 };
   }
   return invoke<Build>("create_build", { name, mcVersion: mc_version, loader });
 }
@@ -318,6 +709,16 @@ export async function createBuild(name: string, mc_version: string, loader: Load
 export async function setBuildImage(build_id: string, src_path: string): Promise<Build> {
   if (!isTauri) throw new Error("нет бэкенда");
   return invoke<Build>("set_build_image", { buildId: build_id, srcPath: src_path });
+}
+
+export async function setBuildBanner(build_id: string, src_path: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("set_build_banner", { buildId: build_id, srcPath: src_path });
+}
+
+export async function getBuildBanner(build_id: string): Promise<string | null> {
+  if (!isTauri) return null;
+  return invoke<string | null>("get_build_banner", { buildId: build_id });
 }
 
 export async function getBuildImage(build_id: string): Promise<string | null> {
@@ -358,6 +759,46 @@ export async function toggleMod(build_id: string, project_id: string): Promise<B
 export async function refreshBuildContent(build_id: string): Promise<Build> {
   if (!isTauri) throw new Error("нет бэкенда");
   return invoke<Build>("refresh_build_content", { buildId: build_id });
+}
+
+export async function matchLocalMods(build_id: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("match_local_mods", { buildId: build_id });
+}
+
+export async function importMrpack(path: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("import_mrpack", { path });
+}
+
+export type ExternalInstance = {
+  source: string;
+  source_label: string;
+  path: string;
+  name: string;
+  mc_version: string;
+  loader: string;
+  mods_count: number;
+};
+
+export async function scanExternalInstances(): Promise<ExternalInstance[]> {
+  if (!isTauri) return [];
+  return invoke<ExternalInstance[]>("scan_external_instances");
+}
+
+export async function importExternalInstance(path: string, source: string): Promise<Build> {
+  if (!isTauri) throw new Error("нет бэкенда");
+  return invoke<Build>("import_external_instance", { path, source });
+}
+
+export async function firstRunPending(): Promise<boolean> {
+  if (!isTauri) return false;
+  return invoke<boolean>("first_run_pending");
+}
+
+export async function completeFirstRun(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("complete_first_run");
 }
 
 export type ModHit = {
@@ -409,6 +850,11 @@ export async function modrinthCategories(): Promise<string[]> {
 export async function modrinthInstall(build_id: string, project_id: string): Promise<Build> {
   if (!isTauri) throw new Error("нет бэкенда");
   return invoke<Build>("modrinth_install", { buildId: build_id, projectId: project_id });
+}
+
+export async function checkBuildUpdates(build_id: string): Promise<string[]> {
+  if (!isTauri) return [];
+  return invoke<string[]>("check_build_updates", { buildId: build_id });
 }
 
 export type GalleryImage = { url: string; title?: string; description?: string; featured?: boolean };

@@ -65,6 +65,11 @@ fn urldecode(s: &str) -> String {
 
 #[tauri::command]
 pub async fn add_microsoft_account(app: AppHandle) -> Result<Account, String> {
+    let acc = interactive_login(app).await?;
+    Ok(accounts::save_account(acc))
+}
+
+pub async fn interactive_login(app: AppHandle) -> Result<Account, String> {
     if CLIENT_ID.is_empty() {
         return Err("Вход Microsoft не настроен в этой сборке (нет client_id)".into());
     }
@@ -315,6 +320,12 @@ async fn finish_login(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| format!("https://crafatar.com/skins/{uuid}"));
 
+    let token_expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+        + 20 * 3600;
+
     let acc = Account {
         id: accounts::gen_id(),
         username: name,
@@ -323,6 +334,10 @@ async fn finish_login(
         access_token: mc_token,
         skin_url,
         refresh_token: refresh.to_string(),
+        aciron_token: String::new(),
+        aciron_name: String::new(),
+        licensed: false,
+        token_expires,
     };
-    Ok(accounts::save_account(acc))
+    Ok(acc)
 }

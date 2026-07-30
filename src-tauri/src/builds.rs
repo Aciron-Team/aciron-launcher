@@ -64,6 +64,9 @@ pub struct Build {
     /// Папка сборки на диске (латиница, транслит имени). Пусто у старых сборок → берётся id.
     #[serde(default)]
     pub dir: String,
+    /// Имя файла широкого баннера в папке сборки ("" = нет).
+    #[serde(default)]
+    pub banner: String,
     /// Имя файла обложки в папке сборки ("" = нет).
     #[serde(default)]
     pub image: String,
@@ -157,7 +160,7 @@ fn unique_dir(name: &str) -> String {
 }
 
 fn store_file() -> PathBuf {
-    settings::launcher_root().join("builds.json")
+    settings::data_root().join("builds.json")
 }
 
 pub fn load_builds() -> Vec<Build> {
@@ -248,6 +251,7 @@ pub fn create_build(name: String, mc_version: String, loader: String) -> Result<
         mods: Vec::new(),
         created: now_secs(),
         dir: dir.clone(),
+        banner: String::new(),
         image: String::new(),
         icon_url: String::new(),
         source_id: String::new(),
@@ -266,10 +270,11 @@ pub fn create_build(name: String, mc_version: String, loader: String) -> Result<
 
 #[tauri::command]
 pub fn delete_build(id: String) -> Result<(), String> {
+    // Папку определяем ПОКА сборка ещё в списке (build_dir резолвит слаг через get_build).
+    let dir = build_dir(&id);
     let mut list = load_builds();
     list.retain(|b| b.id != id);
     save_builds(&list)?;
-    let dir = build_dir(&id);
     if dir.is_dir() {
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -280,6 +285,62 @@ pub fn delete_build(id: String) -> Result<(), String> {
 pub fn open_build_folder(id: String) -> Result<(), String> {
     let dir = build_dir(&id);
     open_folder(dir.to_string_lossy().into_owned())
+}
+
+/// Ставит широкий баннер сборки (шапка на странице сборки). Копируется в папку
+/// сборки как `banner.<ext>`; пустой src_path — убрать баннер.
+#[tauri::command]
+pub fn set_build_banner(build_id: String, src_path: String) -> Result<Build, String> {
+    let mut build = get_build(&build_id).ok_or("Сборка не найдена")?;
+    let dir = build_dir(&build_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if !build.banner.is_empty() {
+        let _ = std::fs::remove_file(dir.join(&build.banner));
+    }
+    if src_path.is_empty() {
+        build.banner = String::new();
+        upsert_build(build.clone())?;
+        return Ok(build);
+    }
+    let src = PathBuf::from(&src_path);
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let filename = format!("banner.{ext}");
+    std::fs::copy(&src, dir.join(&filename)).map_err(|e| e.to_string())?;
+    build.banner = filename;
+    upsert_build(build.clone())?;
+    Ok(build)
+}
+
+/// Баннер сборки как data-URL (base64), либо None.
+#[tauri::command]
+pub fn get_build_banner(build_id: String) -> Option<String> {
+    let build = get_build(&build_id)?;
+    if build.banner.is_empty() {
+        return None;
+    }
+    file_data_url(&build_dir(&build_id).join(&build.banner))
+}
+
+/// Читает картинку с диска и отдаёт как data-URL.
+fn file_data_url(path: &std::path::Path) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let bytes = std::fs::read(path).ok()?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    Some(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
 }
 
 /// Ставит обложку сборки (копирует картинку в папку сборки).

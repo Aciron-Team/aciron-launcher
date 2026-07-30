@@ -6,11 +6,18 @@ use std::io::Read;
 use std::path::Path;
 use tauri::AppHandle;
 
-const DEFAULT_PROXY: &str = "https://api.aciron.pro";
+const DEFAULT_PROXY: &str = match option_env!("ACIRON_CF_PROXY_URL") {
+    Some(u) => u,
+    None => "https://example.invalid",
+};
 const GAME_MINECRAFT: i64 = 432;
 
 fn base() -> String {
     std::env::var("ACIRON_CF_PROXY").unwrap_or_else(|_| DEFAULT_PROXY.to_string())
+}
+
+pub(crate) fn proxy_base() -> String {
+    base()
 }
 
 fn http() -> Result<reqwest::Client, String> {

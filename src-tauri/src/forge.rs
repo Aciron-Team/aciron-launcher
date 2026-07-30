@@ -28,6 +28,8 @@ pub async fn install(
     mc_version: &str,
     root: &Path,
     libraries_dir: &Path,
+    // Папка ванильной версии (<versions_dir>/<mc>) — из неё установщик берёт клиент.
+    vanilla_dir: &Path,
     java: &Path,
     app: &AppHandle,
 ) -> Result<LoaderProfile, String> {
@@ -60,6 +62,10 @@ pub async fn install(
         .to_string();
     let forge_json = root.join("versions").join(&id).join(format!("{id}.json"));
 
+    // Установщик ищет ванильную версию в <root>/versions/<mc>/ — если наши версии
+    // лежат в другой папке (настройка «Папка версий»), кладём туда копию.
+    mirror_vanilla(root, vanilla_dir, mc_version);
+
     if !forge_json.exists() {
         run_installer(java, &installer, root, app).await?;
         if !forge_json.exists() {
@@ -70,13 +76,56 @@ pub async fn install(
     }
     emit(app, "forge", "Forge установлен", 1, 1);
 
-    // Читаем именно установленный профиль (что записал установщик).
-    let vjson: Value = serde_json::from_slice(
-        &std::fs::read(&forge_json).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let read_profile = |path: &Path| -> Result<Value, String> {
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())
+    };
 
-    build_profile(client, &vjson, libraries_dir, mc_version).await
+    let vjson = read_profile(&forge_json)?;
+    let profile = build_profile(client, &vjson, libraries_dir, mc_version).await?;
+
+    // Часть библиотек Forge создают ПРОЦЕССОРЫ установщика (client-…-srg.jar,
+    // client-…-extra.jar, forge-…-client.jar). Если прошлый запуск установщика
+    // оборвался, профиль уже лежит на диске, установщик больше не запускается —
+    // и игра падает с «Invalid paths argument». Поэтому проверяем файлы и при
+    // необходимости прогоняем установщик ещё раз.
+    let missing: Vec<PathBuf> = profile
+        .libraries
+        .iter()
+        .filter(|(_, p)| !p.exists())
+        .map(|(_, p)| p.clone())
+        .collect();
+    if missing.is_empty() {
+        return Ok(profile);
+    }
+
+    emit(app, "forge", "Доустановка файлов Forge…", 0, 1);
+    run_installer(java, &installer, root, app).await?;
+    let profile = build_profile(client, &read_profile(&forge_json)?, libraries_dir, mc_version).await?;
+    if let Some((_, p)) = profile.libraries.iter().find(|(_, p)| !p.exists()) {
+        return Err(format!(
+            "Установщик {kind} не создал файл {}. Удалите папку versions/{id} и попробуйте снова.",
+            p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+        ));
+    }
+    Ok(profile)
+}
+
+/// Копирует ванильные <mc>.json и <mc>.jar в <root>/versions/<mc>/ — там их ищет
+/// установщик Forge (его процессоры патчат именно этот клиент).
+fn mirror_vanilla(root: &Path, vanilla_dir: &Path, mc_version: &str) {
+    let target = root.join("versions").join(mc_version);
+    if target == vanilla_dir {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&target);
+    for ext in ["json", "jar"] {
+        let from = vanilla_dir.join(format!("{mc_version}.{ext}"));
+        let to = target.join(format!("{mc_version}.{ext}"));
+        if from.exists() && !to.exists() {
+            let _ = std::fs::copy(&from, &to);
+        }
+    }
 }
 
 /// Последняя (recommended, иначе latest) версия Forge под версию игры.
@@ -153,6 +202,9 @@ async fn run_installer(
     let installer = installer.to_path_buf();
     let root = root.to_path_buf();
     let out = tokio::task::spawn_blocking(move || {
+        // javaw.exe не отдаёт вывод — установщик запускаем консольной java.exe.
+        let console = java.with_file_name(if cfg!(windows) { "java.exe" } else { "java" });
+        let java = if console.exists() { console } else { java };
         let mut cmd = std::process::Command::new(&java);
         cmd.arg("-jar")
             .arg(&installer)
@@ -171,7 +223,9 @@ async fn run_installer(
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        let snippet: String = err.chars().take(500).collect();
+        let log = String::from_utf8_lossy(&out.stdout);
+        let text = if err.trim().is_empty() { log } else { err };
+        let snippet: String = text.chars().rev().take(500).collect::<String>().chars().rev().collect();
         return Err(format!("Установщик Forge завершился с ошибкой: {snippet}"));
     }
     Ok(())

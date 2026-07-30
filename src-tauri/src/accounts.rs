@@ -1,5 +1,5 @@
 use crate::launcher::offline_uuid;
-use crate::settings::launcher_root;
+use crate::settings::data_root;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -19,6 +19,18 @@ pub struct Account {
 
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub refresh_token: String,
+
+    #[serde(default)]
+    pub aciron_token: String,
+
+    #[serde(default)]
+    pub aciron_name: String,
+
+    #[serde(default)]
+    pub licensed: bool,
+
+    #[serde(default)]
+    pub token_expires: u64,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -30,7 +42,7 @@ struct Store {
 }
 
 fn store_file() -> PathBuf {
-    launcher_root().join("accounts.json")
+    data_root().join("accounts.json")
 }
 
 fn load() -> Store {
@@ -77,7 +89,14 @@ pub fn save_account(acc: Account) -> Account {
     acc
 }
 
-pub fn update_tokens(id: &str, access_token: &str, refresh_token: &str, uuid: &str, username: &str) {
+pub fn update_tokens(
+    id: &str,
+    access_token: &str,
+    refresh_token: &str,
+    uuid: &str,
+    username: &str,
+    token_expires: u64,
+) {
     let mut store = load();
     if let Some(a) = store.accounts.iter_mut().find(|a| a.id == id) {
         a.access_token = access_token.to_string();
@@ -86,8 +105,22 @@ pub fn update_tokens(id: &str, access_token: &str, refresh_token: &str, uuid: &s
         }
         a.uuid = uuid.to_string();
         a.username = username.to_string();
+        a.token_expires = token_expires;
     }
     let _ = save(&store);
+}
+
+pub fn get_account(id: &str) -> Option<Account> {
+    load().accounts.into_iter().find(|a| a.id == id)
+}
+
+pub fn with_account<F: FnOnce(&mut Account)>(id: &str, f: F) -> Option<Account> {
+    let mut store = load();
+    let acc = store.accounts.iter_mut().find(|a| a.id == id)?;
+    f(acc);
+    let updated = acc.clone();
+    let _ = save(&store);
+    Some(updated)
 }
 
 #[tauri::command]
@@ -114,6 +147,10 @@ pub fn add_offline_account(username: String) -> Result<Account, String> {
         access_token: "0".into(),
         skin_url: String::new(),
         refresh_token: String::new(),
+        aciron_token: String::new(),
+        aciron_name: String::new(),
+        licensed: false,
+        token_expires: 0,
     };
     store.active = acc.id.clone();
     store.accounts.push(acc.clone());

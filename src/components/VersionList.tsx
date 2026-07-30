@@ -85,24 +85,17 @@ export default function VersionList({
             options={[{ value: "", label: "Все версии MC" }, ...mcOptions.map((v) => ({ value: v, label: v }))]}
             className="w-40"
           />
-          <div className="flex gap-1 rounded-lg bg-bg p-1">
-            {[
-              ["", "Все"],
-              ["release", "Релиз"],
-              ["beta", "Beta"],
-              ["alpha", "Alpha"],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setTypeFilter(id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                  typeFilter === id ? "bg-accent text-bg" : "text-muted hover:text-text"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Dropdown
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={[
+              { value: "", label: "Все типы" },
+              { value: "release", label: "Релиз", icon: "fa-circle-check" },
+              { value: "beta", label: "Beta", icon: "fa-flask" },
+              { value: "alpha", label: "Alpha", icon: "fa-triangle-exclamation" },
+            ]}
+            className="w-40"
+          />
           <span className="ml-auto text-[11px] text-muted">{filtered.length} версий</span>
         </div>
       )}

@@ -1,5 +1,4 @@
-import { useRef, useState } from "react";
-import { useClickOutside } from "../hooks/useClickOutside";
+import Dropdown from "./Dropdown";
 import { ModrinthIcon, CurseForgeIcon, FtbIcon } from "./Icons";
 
 export type Source = "modrinth" | "curseforge" | "ftb";
@@ -24,48 +23,21 @@ export default function SourceMenu({
   onChange: (s: Source) => void;
   allow?: Source[];
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useClickOutside(ref, () => setOpen(false));
-
   const sources = allow ? SOURCES.filter((s) => allow.includes(s.id)) : SOURCES;
-  const cur = SOURCES.find((s) => s.id === value)!;
+  const options = sources.map((s) => ({
+    value: s.id,
+    label: s.label,
+    node: <s.Icon size={16} />,
+  }));
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm font-medium text-text transition-colors hover:border-accent/50"
-      >
-        <cur.Icon size={16} />
-        <span>{cur.label}</span>
-        <i className={`fa-solid fa-chevron-down text-[10px] text-muted transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      {open && (
-        <div className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-xl border border-border bg-panel shadow-xl shadow-black/40">
-          {sources.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                onChange(s.id);
-                setOpen(false);
-              }}
-              className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-card ${
-                value === s.id ? "text-accent" : "text-text"
-              }`}
-            >
-              <s.Icon size={18} />
-              <span className="flex-1 font-medium">{s.label}</span>
-              {!s.ready && (
-                <span className="rounded bg-card px-1.5 py-0.5 text-[10px] text-muted">скоро</span>
-              )}
-              {value === s.id && <i className="fa-solid fa-check text-xs text-accent" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <Dropdown
+      value={value}
+      options={options}
+      onChange={(v) => onChange(v as Source)}
+      align="right"
+      className="w-44"
+    />
   );
 }
 

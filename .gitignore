@@ -16,19 +16,17 @@ src-tauri/gen
 secrets.json
 **/apikeys.json
 **/*.secret.*
-# Токен прокси (ACIRON_PROXY_TOKEN) вшивается в бинарь при сборке.
 .cargo/config.toml
 **/.cargo/config.toml
+.env.example
+**/config.toml.example
 
-# --- Личные / рабочие файлы ---
 TODO.md
 launcher-screenshot.png
 /aciron-launcher
 
-# --- Артефакты релиза (генерируются, не в репо) ---
 latest.json
 
-# --- Логи и временное ---
 *.log
 npm-debug.log*
 .cache

@@ -21,12 +21,17 @@ export default function VersionPickerModal({
   const pick = async (v: ModVersion) => {
     if (busy) return;
     setBusy(v.id);
+
+    window.dispatchEvent(
+      new CustomEvent("aciron-task-start", { detail: { name: pack.title } })
+    );
     try {
       await installModpackContent(source, pack.project_id, v.id);
       toast(`Сборка «${pack.title}» (${v.version_number}) установлена`, "success");
       onInstalled();
       onClose();
     } catch (e) {
+      window.dispatchEvent(new CustomEvent("aciron-task-end"));
       toast(String(e), "error");
       setBusy(null);
     }

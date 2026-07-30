@@ -2,17 +2,18 @@
 
 /* ---- Aciron palette (design.md) ---- */
 @theme {
-  --color-bg: #1e1a16; /* фон окна */
-  --color-panel: #2a2320; /* панели */
-  --color-card: #352c27; /* карточки/инпуты */
-  --color-border: #443a33; /* границы */
-  --color-text: #ede6df; /* основной текст */
-  --color-muted: #a89b8f; /* вторичный текст */
+  /* Поверхности не зависят от темы (см. SURFACE в ThemeContext.tsx) */
+  --color-bg: #131315; /* фон окна */
+  --color-panel: #1c1c1f; /* панели */
+  --color-card: #232327; /* карточки/инпуты */
+  --color-border: #2e2e33; /* границы */
+  --color-text: #D9D9D9; /* основной текст */
+  --color-muted: #818181; /* вторичный текст */
   --color-accent: #f5a96b; /* акцент */
   --color-accent-hover: #ffbc85; /* ховер */
   --color-accent-active: #d98f52; /* нажатие */
 
-  --color-ctrl-hover: #2f281d; /* заливка кнопок окна при наведении */
+  --color-ctrl-hover: #232327; /* заливка кнопок окна при наведении */
 
   --font-sans: "Geologica Variable", system-ui, sans-serif;
 }
@@ -36,11 +37,13 @@ body,
   overflow: hidden;
 }
 
-/* Развёрнутое окно (Windows maximize) — углы прямые, фон непрозрачный
-   (отступ-компенсация рамки заполняется фоном, а не прозрачностью). */
+/* Развёрнутое окно (Windows maximize) — углы прямые, фон непрозрачный.
+   --win-inset ставит windowState.ts: borderless-окно в развёрнутом виде вылезает
+   за экран на ширину рамки, отступ возвращает края интерфейса на экран. */
 html.win-maximized #root {
   border-radius: 0;
   background: var(--color-bg);
+  padding: var(--win-inset, 0px);
 }
 
 body {
@@ -65,7 +68,7 @@ body {
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #5a4d43;
+  background: #3d3d44;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-corner {
@@ -81,6 +84,113 @@ body {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* ---- появление карточек по одной (главная / сборки) ---- */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+/* backwards — до своей задержки карточка держится невидимой, а не мигает */
+.card-in {
+  animation: card-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+/* ---- удаление карточки: плавно уходит вниз и растворяется ---- */
+@keyframes card-fall {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(64px) scale(0.96);
+  }
+}
+.card-fall {
+  animation: card-fall 0.34s cubic-bezier(0.4, 0, 0.9, 1) forwards;
+  pointer-events: none;
+}
+
+/* ---- выпадающее меню ---- */
+/* Только прозрачность: у меню в портале свой inline-transform (компенсация
+   масштаба интерфейса), и анимация transform его бы перебила. */
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.dropdown-in {
+  animation: dropdown-in 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---- орб загрузок: появление и уход ---- */
+@keyframes orb-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes orb-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(14px) scale(0.7);
+  }
+}
+.orb-in {
+  animation: orb-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.orb-out {
+  animation: orb-out 0.26s cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+/* ---- удаление строки списка: улетает влево ---- */
+@keyframes row-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-64px);
+  }
+}
+.row-out {
+  animation: row-out 0.26s cubic-bezier(0.4, 0, 0.9, 1) forwards;
+  pointer-events: none;
+}
+
+/* ---- уход уведомления: вверх + растворение ---- */
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.96);
+  }
+}
+.toast-out {
+  animation: toast-out 0.26s cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 /* ---- градиентный текст (заголовок Aciron) ---- */
@@ -167,11 +277,35 @@ body {
     transform: translateY(0) scale(1);
   }
 }
+@keyframes modal-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes modal-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
 .modal-backdrop {
   animation: modal-backdrop-in 0.18s ease forwards;
 }
 .modal-panel {
   animation: modal-panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.modal-backdrop-out {
+  animation: modal-backdrop-out 0.18s ease forwards;
+}
+.modal-panel-out {
+  animation: modal-panel-out 0.18s cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 /* ---- лайтбокс галереи ---- */

@@ -79,16 +79,10 @@ export default function ModpackDetail({
   ];
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col px-8 py-6">
       {}
-      <div className="flex items-center gap-3 border-b border-border px-5 py-3">
-        <button
-          onClick={onBack}
-          className="grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-card hover:text-text"
-        >
-          <i className="fa-solid fa-arrow-left" />
-        </button>
-        <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-bg">
+      <div className="mb-5 flex items-start gap-4">
+        <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-[16px] bg-card">
           {icon ? (
             <img src={icon} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -96,31 +90,37 @@ export default function ModpackDetail({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-lg font-bold text-text">{pack.title}</div>
-          <div className="flex items-center gap-3 text-xs text-muted">
-            {pack.author && (
-              <span>
-                <i className="fa-solid fa-user mr-1" />
-                {pack.author}
-              </span>
-            )}
+          <h1 className="truncate text-[30px] font-light leading-none text-text">{pack.title}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[#818181]">
+            {pack.author && <span>от {pack.author}</span>}
             <span>
-              <i className="fa-solid fa-download mr-1" />
+              <i className="fa-solid fa-download mr-1 text-[10px]" />
               {fmt(downloads)}
             </span>
           </div>
+          <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-muted">
+            {pack.description}
+          </p>
         </div>
-        <button
-          onClick={() => setTab("versions")}
-          className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
-        >
-          <i className="fa-solid fa-download" />
-          Установить
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={onBack}
+            title="Назад"
+            className="grid h-11 w-11 place-items-center rounded-[8px] bg-card text-muted transition-colors hover:text-text"
+          >
+            <i className="fa-solid fa-arrow-left text-sm" />
+          </button>
+          <button
+            onClick={() => setTab("versions")}
+            className="h-11 rounded-[8px] bg-accent px-7 text-sm font-semibold text-bg transition-colors hover:bg-accent-hover active:bg-accent-active"
+          >
+            Установить
+          </button>
+        </div>
       </div>
 
       {}
-      <div className="flex items-center gap-1 border-b border-border px-4">
+      <div className="mb-4 flex items-baseline gap-4">
         {([
           ["about", "Описание"],
           ["versions", "Версии"],
@@ -128,14 +128,11 @@ export default function ModpackDetail({
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`relative px-3 py-2.5 text-sm font-semibold transition-colors ${
+            className={`text-[20px] font-light leading-none transition-colors ${
               tab === id ? "text-text" : "text-muted hover:text-text"
             }`}
           >
             {label}
-            {tab === id && (
-              <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" />
-            )}
           </button>
         ))}
       </div>

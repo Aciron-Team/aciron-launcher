@@ -1,9 +1,25 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Modal from "./Modal";
-import { addOfflineAccount, addMicrosoftAccount, openUrl, isTauri } from "../api";
+import {
+  addOfflineAccount,
+  addMicrosoftAccount,
+  acironLogin,
+  acironRegister,
+  acironVerifyEmail,
+  acironResendCode,
+  openUrl,
+  isTauri,
+  ACIRON_ID_WEB,
+} from "../api";
 import { MicrosoftIcon } from "./Icons";
+import { ACIRON_LOGIN_ENABLED } from "../config";
 
-type Step = "choose" | "offline" | "aciron" | "microsoft";
+type Step = "choose" | "offline" | "aciron" | "register" | "verify" | "microsoft";
+
+const NICK_RE = /^[A-Za-z0-9_]{3,16}$/;
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+const RESEND_COOLDOWN = 30;
 
 const inputCls =
   "w-full rounded-lg border border-border bg-bg px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-muted/60 focus:border-accent";
@@ -11,11 +27,14 @@ const inputCls =
 export default function AddAccountModal({
   onClose,
   onAdded,
+  initialStep = "choose",
 }: {
   onClose: () => void;
   onAdded: () => void;
+
+  initialStep?: Step;
 }) {
-  const [step, setStep] = useState<Step>("choose");
+  const [step, setStep] = useState<Step>(initialStep);
   const [name, setName] = useState("");
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
@@ -23,6 +42,19 @@ export default function AddAccountModal({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [authUrl, setAuthUrl] = useState("");
+  const [code, setCode] = useState("");
+  const [twofa, setTwofa] = useState(false);
+
+  const [regNick, setRegNick] = useState("");
+  const [email, setEmail] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   const done = () => {
     onAdded();
@@ -49,10 +81,82 @@ export default function AddAccountModal({
     }
   };
 
-  const submitAciron = () => {
+  const submitAciron = async () => {
     setError("");
-    if (!login.trim() || !password) return setError("Введите email и пароль");
-    setNotice("Аккаунты Aciron скоро — сервис авторизации в разработке.");
+    setNotice("");
+    if (!login.trim() || !password) return setError("Введите ник/e-mail и пароль");
+    if (twofa && !code.trim()) return setError("Введите код 2FA");
+    setBusy(true);
+    try {
+      await acironLogin(login.trim(), password, twofa ? code.trim() : undefined);
+      done();
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, "");
+      if (msg === "2FA_REQUIRED") {
+        setTwofa(true);
+        setNotice("У аккаунта включена 2FA — введите код из приложения или резервный код");
+      } else if (msg.startsWith("EMAIL_NOT_VERIFIED")) {
+
+        setEmail(msg.slice("EMAIL_NOT_VERIFIED:".length) || login.trim());
+        setCode("");
+        setCooldown(RESEND_COOLDOWN);
+        setNotice("Почта ещё не подтверждена — мы выслали новый код");
+        setStep("verify");
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitRegister = async () => {
+    setError("");
+    setNotice("");
+    if (!NICK_RE.test(regNick.trim()))
+      return setError("Ник: 3–16 символов, только латиница, цифры и _");
+    if (!EMAIL_RE.test(email.trim())) return setError("Введите корректный e-mail");
+    if (password.length < 8) return setError("Пароль минимум 8 символов");
+    if (password !== password2) return setError("Пароли не совпадают");
+    setBusy(true);
+    try {
+      const mail = await acironRegister(regNick.trim(), email.trim(), password);
+      setEmail(mail);
+      setCode("");
+      setCooldown(RESEND_COOLDOWN);
+      setNotice(`Код отправлен на ${mail}`);
+      setStep("verify");
+    } catch (e) {
+      setError(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitVerify = async () => {
+    setError("");
+    if (code.trim().length < 6) return setError("Код из письма — 6 цифр");
+    setBusy(true);
+    try {
+      await acironVerifyEmail(email.trim(), code.trim());
+      done();
+    } catch (e) {
+      setError(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resend = async () => {
+    if (cooldown > 0) return;
+    setError("");
+    setCooldown(RESEND_COOLDOWN);
+    try {
+      await acironResendCode(email.trim());
+      setNotice(`Новый код отправлен на ${email.trim()}`);
+    } catch (e) {
+      setError(String(e).replace(/^Error:\s*/, ""));
+    }
   };
 
   const startMicrosoft = async () => {
@@ -88,6 +192,10 @@ export default function AddAccountModal({
       ? "Пиратский аккаунт"
       : step === "aciron"
       ? "Вход в Aciron ID"
+      : step === "register"
+      ? "Регистрация Aciron ID"
+      : step === "verify"
+      ? "Подтверждение e-mail"
       : step === "microsoft"
       ? "Вход через Microsoft"
       : "Добавить аккаунт";
@@ -116,11 +224,16 @@ export default function AddAccountModal({
               iconBg="bg-bg text-accent"
               title="Аккаунт Aciron"
               desc="Единый аккаунт Aciron ID"
-              onClick={() => {
-                setNotice("");
-                setError("");
-                setStep("aciron");
-              }}
+              disabled={!ACIRON_LOGIN_ENABLED}
+              onClick={
+                ACIRON_LOGIN_ENABLED
+                  ? () => {
+                      setNotice("");
+                      setError("");
+                      setStep("aciron");
+                    }
+                  : undefined
+              }
             />
           </div>
         )}
@@ -200,13 +313,12 @@ export default function AddAccountModal({
         {step === "aciron" && (
           <div className="space-y-3">
             <label className="block">
-              <span className="mb-1.5 block text-xs text-muted">Email</span>
+              <span className="mb-1.5 block text-xs text-muted">Ник или e-mail</span>
               <input
                 autoFocus
-                type="email"
                 className={inputCls}
                 value={login}
-                placeholder="you@example.com"
+                placeholder="Steve или you@example.com"
                 onChange={(e) => {
                   setLogin(e.target.value);
                   setNotice("");
@@ -227,6 +339,22 @@ export default function AddAccountModal({
                 onKeyDown={(e) => e.key === "Enter" && submitAciron()}
               />
             </label>
+            {twofa && (
+              <label className="block">
+                <span className="mb-1.5 block text-xs text-muted">Код 2FA</span>
+                <input
+                  autoFocus
+                  className={`${inputCls} text-center tracking-[0.3em]`}
+                  value={code}
+                  placeholder="000000"
+                  maxLength={9}
+                  onChange={(e) =>
+                    setCode(e.target.value.replace(/[^0-9A-Za-z-]/g, "").toUpperCase())
+                  }
+                  onKeyDown={(e) => e.key === "Enter" && submitAciron()}
+                />
+              </label>
+            )}
             {error && <Err msg={error} />}
             {notice && <Notice msg={notice} />}
             <div className="flex gap-2 pt-1">
@@ -236,14 +364,122 @@ export default function AddAccountModal({
             <div className="pt-1 text-center text-xs text-muted">
               Нет аккаунта?{" "}
               <button
-                onClick={() =>
-                  setNotice("Регистрация Aciron скоро — сервис в разработке.")
-                }
+                onClick={() => {
+                  setError("");
+                  setNotice("");
+                  setPassword("");
+                  setStep("register");
+                }}
                 className="font-semibold text-accent transition-colors hover:text-accent-hover"
               >
                 Зарегистрироваться
               </button>
             </div>
+          </div>
+        )}
+
+        {step === "register" && (
+          <div className="space-y-3">
+            <label className="block">
+              <span className="mb-1.5 block text-xs text-muted">Ник</span>
+              <input
+                autoFocus
+                className={inputCls}
+                value={regNick}
+                placeholder="Player"
+                maxLength={16}
+                onChange={(e) => setRegNick(e.target.value.replace(/[^A-Za-z0-9_]/g, ""))}
+              />
+              <span className="mt-1 block text-[11px] text-muted">
+                Под этим ником вас будут находить друзья и видеть в игре
+              </span>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-xs text-muted">E-mail</span>
+              <input
+                className={inputCls}
+                value={email}
+                placeholder="you@example.com"
+                onChange={(e) => setEmail(e.target.value.trim())}
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="mb-1.5 block text-xs text-muted">Пароль</span>
+                <input
+                  type="password"
+                  className={inputCls}
+                  value={password}
+                  placeholder="от 8 символов"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs text-muted">Повтор пароля</span>
+                <input
+                  type="password"
+                  className={inputCls}
+                  value={password2}
+                  placeholder="••••••••"
+                  onChange={(e) => setPassword2(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitRegister()}
+                />
+              </label>
+            </div>
+            {error && <Err msg={error} />}
+            <div className="flex gap-2 pt-1">
+              <BackBtn onClick={() => setStep("aciron")} />
+              <PrimaryBtn onClick={submitRegister} busy={busy} label="Создать аккаунт" />
+            </div>
+          </div>
+        )}
+
+        {step === "verify" && (
+          <div className="space-y-3">
+            <div className="flex flex-col items-center gap-2 py-2 text-center">
+              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-accent/15 text-accent">
+                <i className="fa-solid fa-envelope-open-text text-2xl" />
+              </div>
+              <p className="text-sm text-text">Мы отправили 6-значный код на</p>
+              <p className="break-all text-sm font-semibold text-accent">{email}</p>
+            </div>
+            <input
+              autoFocus
+              className={`${inputCls} text-center text-lg tracking-[0.4em]`}
+              value={code}
+              placeholder="000000"
+              maxLength={6}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              onKeyDown={(e) => e.key === "Enter" && submitVerify()}
+            />
+            {error && <Err msg={error} />}
+            {notice && <Notice msg={notice} />}
+            <button
+              onClick={resend}
+              disabled={cooldown > 0}
+              className="w-full rounded-lg border border-border bg-bg px-4 py-2.5 text-sm text-muted transition-colors hover:text-text disabled:opacity-50"
+            >
+              {cooldown > 0 ? `Отправить код снова через ${cooldown} с` : "Отправить код снова"}
+            </button>
+            <div className="flex gap-2 pt-1">
+              <BackBtn
+                onClick={() => {
+                  setError("");
+                  setNotice("");
+                  setStep("aciron");
+                }}
+              />
+              <PrimaryBtn onClick={submitVerify} busy={busy} label="Подтвердить" />
+            </div>
+            <p className="text-center text-[11px] leading-relaxed text-muted">
+              Письмо не пришло? Проверьте папку «Спам» или{" "}
+              <button
+                onClick={() => openUrl(ACIRON_ID_WEB)}
+                className="text-accent transition-colors hover:text-accent-hover"
+              >
+                откройте личный кабинет
+              </button>
+            </p>
           </div>
         )}
       </div>

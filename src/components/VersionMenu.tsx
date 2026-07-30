@@ -167,7 +167,7 @@ export default function VersionMenu({
       <button
         onClick={() => setOpen((o) => !o)}
         className={`flex h-14 min-w-[180px] items-center gap-3 rounded-xl border px-3 transition-colors ${
-          open ? "border-border bg-card" : "border-transparent bg-card/60 hover:bg-card"
+          open ? "border-border bg-card" : "border-transparent bg-card hover:bg-border/50"
         }`}
       >
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-accent/15 text-accent">

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { APP_VERSION, APP_CHANNEL } from "../config";
 import { getSettings, isTauri } from "../api";
+import { useMaximized } from "../windowState";
 
 const appWindow = (() => {
   try {
@@ -18,18 +19,8 @@ export default function TitleBar() {
   const [update, setUpdate] = useState<any>(null);
   const [state, setState] = useState<UpState>("idle");
   const [pct, setPct] = useState(0);
-  const [maximized, setMaximized] = useState(false);
 
-  useEffect(() => {
-    if (!appWindow) return;
-
-    const apply = (m: boolean) => setMaximized(m);
-    appWindow.isMaximized().then(apply).catch(() => {});
-    const un = appWindow.onResized(() => appWindow.isMaximized().then(apply).catch(() => {}));
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
+  const maximized = useMaximized();
 
   const toggleMaximize = () => appWindow?.toggleMaximize().catch(() => {});
 
@@ -132,28 +123,38 @@ export default function TitleBar() {
         <p className="text-sm mx-3 font-light text-muted opacity-45">
           v{APP_VERSION} {APP_CHANNEL}
         </p>
+        {}
+        <div className="flex h-full items-center">
         <button
           onClick={() => appWindow?.minimize()}
           aria-label="Свернуть"
-          className="grid h-9 w-11 place-items-center text-muted transition-colors hover:bg-ctrl-hover rounded-[8px] hover:text-text"
+          className="grid h-9 w-9 place-items-center text-[#676767] transition-colors hover:bg-ctrl-hover rounded-md hover:text-text"
         >
-          <i className="fa-solid fa-minus text-xs" />
+          <svg width="15" height="2" viewBox="0 0 15 2" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 1H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
         </button>
         <button
           onClick={toggleMaximize}
           aria-label={maximized ? "Восстановить" : "Развернуть"}
           title={maximized ? "Восстановить" : "Развернуть"}
-          className="grid h-9 w-11 place-items-center text-muted transition-colors hover:bg-ctrl-hover rounded-[8px] hover:text-text"
+          className="grid h-9 w-9 place-items-center text-[#676767] transition-colors hover:bg-ctrl-hover rounded-md hover:text-text"
         >
-          <i className={`fa-regular ${maximized ? "fa-window-restore" : "fa-square"} text-[11px]`} />
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M11 1H4C2.34315 1 1 2.34315 1 4V11C1 12.6569 2.34315 14 4 14H11C12.6569 14 14 12.6569 14 11V4C14 2.34315 12.6569 1 11 1Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+
         </button>
         <button
           onClick={() => appWindow?.close()}
           aria-label="Закрыть"
-          className="grid h-9 w-11 place-items-center text-muted transition-colors hover:bg-ctrl-hover rounded-[8px] hover:text-[#ef4444]"
+          className="grid h-9 w-9 place-items-center text-[#676767] transition-colors hover:bg-[#FF3535]/50 rounded-md hover:text-[#CDCDCD]"
         >
-          <i className="fa-solid fa-xmark text-sm" />
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M1 1L14 14M1 14L14 1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
         </button>
+        </div>
       </div>
     </div>
   );

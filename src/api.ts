@@ -558,6 +558,8 @@ export type Outfit = {
   name: string;
   skinId: string | null;
   capeId: string | null;
+  skinCatalogId: string | null;
+  capeCatalogId: string | null;
   model: SkinModelId;
   createdAt: number;
 };
@@ -709,10 +711,19 @@ export async function outfitAdd(
   name: string,
   skin_id: string | null,
   cape_id: string | null,
+  skin_catalog_id: string | null,
+  cape_catalog_id: string | null,
   model: SkinModelId
 ): Promise<Outfit> {
   if (!isTauri) throw new Error("нет бэкенда");
-  const o = await invoke<Outfit>("outfit_add", { name, skinId: skin_id, capeId: cape_id, model });
+  const o = await invoke<Outfit>("outfit_add", {
+    name,
+    skinId: skin_id,
+    capeId: cape_id,
+    skinCatalogId: skin_catalog_id,
+    capeCatalogId: cape_catalog_id,
+    model,
+  });
   cacheBust("wardrobe");
   return o;
 }

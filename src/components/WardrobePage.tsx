@@ -355,6 +355,8 @@ export default function WardrobePage() {
           outfitName.trim() || "Образ",
           data?.active.skinId ?? null,
           data?.active.capeId ?? null,
+          data?.active.skinCatalogId ?? null,
+          data?.active.capeCatalogId ?? null,
           data?.active.model ?? "classic"
         ),
       "Образ сохранён"
@@ -409,14 +411,16 @@ export default function WardrobePage() {
   }, [lic, data, catalog]);
 
   const wearOutfit = (o: Outfit) => {
-    const skin = data?.skins.find((s) => s.id === o.skinId);
-    const cape = data?.capes.find((c) => c.id === o.capeId);
+    const ownSkin = data?.skins.find((s) => s.id === o.skinId);
+    const catSkin = o.skinCatalogId ? stock?.find((s) => s.id === o.skinCatalogId) : undefined;
+    const ownCape = data?.capes.find((c) => c.id === o.capeId);
+    const catCape = o.capeCatalogId ? catalog?.find((c) => c.id === o.capeCatalogId) : undefined;
     setInstant({
-      skinKey: skin?.id,
-      skinUrl: skin ? textureUrl(skin) : undefined,
+      skinKey: ownSkin?.id ?? catSkin?.id,
+      skinUrl: ownSkin ? textureUrl(ownSkin) : catSkin ? `${ACIRON_ID_API}${catSkin.url}` : undefined,
       model: o.model,
-      capeKey: cape ? `own:${cape.id}` : "off",
-      capeUrl: cape ? textureUrl(cape) : null,
+      capeKey: ownCape ? `own:${ownCape.id}` : catCape ? `cat:${catCape.id}` : "off",
+      capeUrl: ownCape ? textureUrl(ownCape) : catCape ? `${ACIRON_ID_API}${catCape.url}` : null,
     });
     pending.current = { skin: () => outfitApply(o.id) };
     setDirty(true);
@@ -701,6 +705,8 @@ export default function WardrobePage() {
                         key={o.id}
                         outfit={o}
                         data={data!}
+                        stock={stock}
+                        catalog={catalog}
                         index={i}
                         busy={busy === o.id}
                         onApply={() => wearOutfit(o)}
@@ -1061,6 +1067,8 @@ function CapeCard({
 function OutfitCard({
   outfit,
   data,
+  stock,
+  catalog,
   index,
   busy,
   onApply,
@@ -1068,32 +1076,59 @@ function OutfitCard({
 }: {
   outfit: Outfit;
   data: WardrobeData;
+  stock: CatalogSkin[] | null;
+  catalog: CatalogCape[] | null;
   index: number;
   busy: boolean;
   onApply: () => void;
   onDelete: () => void;
 }) {
-  const skin = data.skins.find((s) => s.id === outfit.skinId);
-  const cape = data.capes.find((c) => c.id === outfit.capeId);
+  // Скин/плащ образа может быть личным (из библиотеки) ИЛИ каталожным (Aciron).
+  const ownSkin = data.skins.find((s) => s.id === outfit.skinId);
+  const catSkin = outfit.skinCatalogId ? stock?.find((s) => s.id === outfit.skinCatalogId) : undefined;
+  const skinUrl = ownSkin ? textureUrl(ownSkin) : catSkin ? `${ACIRON_ID_API}${catSkin.url}` : null;
+
+  const ownCape = data.capes.find((c) => c.id === outfit.capeId);
+  const catCape = outfit.capeCatalogId ? catalog?.find((c) => c.id === outfit.capeCatalogId) : undefined;
+  const capeUrl = ownCape ? textureUrl(ownCape) : catCape ? `${ACIRON_ID_API}${catCape.url}` : null;
+  const capeName = ownCape?.name ?? catCape?.name ?? null;
+
+  const modelLabel = outfit.model === "slim" ? "Тонкие руки" : "Классика";
+
   return (
     <div style={{ animationDelay: `${cardInDelay(index)}ms` }} className={`card-in ${cardCls(false)}`}>
       <button onClick={onApply} disabled={busy} className="flex w-full flex-col items-center gap-2">
         <div className="relative grid h-[140px] w-full place-items-center">
           {busy ? (
             <i className="fa-solid fa-spinner fa-spin text-accent" />
-          ) : skin ? (
-            <SkinThumb url={textureUrl(skin)} model={outfit.model} className="h-[140px] w-auto" />
+          ) : skinUrl ? (
+            <SkinThumb url={skinUrl} model={outfit.model} className="h-[140px] w-auto" />
           ) : (
             <i className="fa-solid fa-shirt text-2xl text-muted" />
           )}
           {}
-          {cape && !busy && (
-            <div className="absolute bottom-0 right-0 overflow-hidden rounded-md border border-border bg-bg p-0.5">
-              <TexturePreview url={textureUrl(cape)} kind="cape" scale={2} />
+          {capeUrl && !busy && (
+            <div
+              title={capeName ?? undefined}
+              className="absolute bottom-0 right-0 overflow-hidden rounded-md border border-border bg-bg p-0.5"
+            >
+              <TexturePreview url={capeUrl} kind="cape" scale={2} />
             </div>
           )}
         </div>
         <span className="line-clamp-1 max-w-full text-xs font-semibold text-text">{outfit.name}</span>
+        {}
+        <span className="flex max-w-full items-center gap-1.5 text-[10px] leading-none text-muted">
+          <i className="fa-solid fa-hand-fist opacity-70" />
+          {modelLabel}
+          <span className="opacity-40">·</span>
+          <i className={`fa-solid ${capeUrl ? "fa-check text-accent" : "fa-xmark opacity-70"}`} />
+          {capeUrl ? (
+            <span className="line-clamp-1">{capeName ?? "Плащ"}</span>
+          ) : (
+            <span>Без плаща</span>
+          )}
+        </span>
       </button>
       <CardTools onDelete={onDelete} />
     </div>

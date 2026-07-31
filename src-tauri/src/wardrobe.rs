@@ -68,6 +68,10 @@ pub struct Outfit {
     pub name: String,
     pub skin_id: Option<String>,
     pub cape_id: Option<String>,
+    #[serde(default)]
+    pub skin_catalog_id: Option<String>,
+    #[serde(default)]
+    pub cape_catalog_id: Option<String>,
     #[serde(default = "default_model")]
     pub model: String,
     pub created_at: i64,
@@ -343,11 +347,19 @@ pub async fn outfit_add(
     name: String,
     skin_id: Option<String>,
     cape_id: Option<String>,
+    skin_catalog_id: Option<String>,
+    cape_catalog_id: Option<String>,
     model: String,
 ) -> Result<Outfit, String> {
     let body: serde_json::Value = send(
-        post("/api/wardrobe/outfit")?
-            .json(&json!({ "name": name, "skinId": skin_id, "capeId": cape_id, "model": model })),
+        post("/api/wardrobe/outfit")?.json(&json!({
+            "name": name,
+            "skinId": skin_id,
+            "capeId": cape_id,
+            "skinCatalogId": skin_catalog_id,
+            "capeCatalogId": cape_catalog_id,
+            "model": model
+        })),
     )
     .await?
     .json()

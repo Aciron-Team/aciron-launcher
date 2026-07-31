@@ -820,17 +820,30 @@ async fn prepare_and_launch(
         // Первым полем по-прежнему голый адрес, чтобы старый агент (у него в
         // сборках на диске может лежать прошлая версия) продолжал понимать строку.
         let mut arg = crate::aciron::base().to_string();
-        // Значок в табе — без ресурспака: рисуем видимым символом ★ (U+2605), это
-        // работает на любой версии и ничего лишнего в папку игры не кладёт.
+        // Значок в табе — без ресурспака. По умолчанию рисуем НАСТОЯЩИЙ ЛОГОТИП как
+        // рантайм-глиф шрифта (кодпоинт E100 + logo=<путь к PNG>): агент читает PNG в
+        // NativeImage и вставляет свой GlyphProvider в дефолтный шрифт. Если PNG записать
+        // не удалось — FALLBACK на обычный символ ★ (U+2605), значок при этом не пропадает.
         // Тумблер settings.launcher_badges: выключен — не добавляем badge/self вовсе.
         if settings.launcher_badges {
             // Список остальных игроков с лаунчера подтянет bridge= (локальный мост).
             if let Some(bridge) = crate::bridge::endpoint() {
                 arg.push_str(&format!("|bridge={bridge}"));
             }
-            // badge=2605 (★) — видимый символ значка без ресурспака; self=<ник> —
-            // сам игрок всегда со значком, он виден сразу без моста.
-            arg.push_str(&format!("|badge=2605|self={}", id.name));
+            // Кладём PNG логотипа рядом с jar (как и сам jar) и, если получилось, шлём
+            // badge=E100 + logo=<путь>. E100 сам по себе в шрифте пуст (квадрат), поэтому
+            // именно под него агент регистрирует глиф из PNG. Неуспех записи -> badge=2605.
+            match ensure_aciron_badge_png(&root) {
+                Some(png) => {
+                    arg.push_str(&format!("|badge=E100|logo={}", png.to_string_lossy()));
+                }
+                None => {
+                    // FALLBACK: PNG нет — рисуем видимым символом ★, значок остаётся.
+                    arg.push_str("|badge=2605");
+                }
+            }
+            // self=<ник> — сам игрок всегда со значком, он виден сразу без моста.
+            arg.push_str(&format!("|self={}", id.name));
             // Маппинги есть не у всякой версии (1.13.2 и старее их не публикуют).
             // Нет файла — агент просто не найдёт классы и значков не покажет.
             let maps = version_dir.join(format!("{version}-mappings.txt"));
@@ -1164,6 +1177,29 @@ fn build_servers_nbt(servers: &[(&str, &str)]) -> Vec<u8> {
 }
 
 const ACIRON_SKINS_JAR: &[u8] = include_bytes!("../resources/aciron-skins.jar");
+
+// PNG логотипа значка (64x64 ARGB с альфой). Вшивается в бинарь так же, как jar, и
+// кладётся рядом с ним на диск: агент читает его по пути logo=<...> и регистрирует как
+// рантайм-глиф кодпоинта E100. НЕ ресурспак — файл нужен только агенту.
+const ACIRON_BADGE_PNG: &[u8] = include_bytes!("../resources/aciron-badge.png");
+
+/// Пишет aciron-badge.png рядом с jar (root) и возвращает путь. Свежесть — по SHA-256
+/// (как для jar): совпадение размеров ненадёжно. При ошибке записи возвращает None —
+/// вызывающий код тогда откатывается на обычный символ значка (badge=2605).
+fn ensure_aciron_badge_png(root: &Path) -> Option<PathBuf> {
+    let png = root.join("aciron-badge.png");
+    let want = sha256_hex(ACIRON_BADGE_PNG);
+    let fresh = std::fs::read(&png)
+        .map(|data| sha256_hex(&data) == want)
+        .unwrap_or(false);
+    if !fresh {
+        if let Err(e) = std::fs::write(&png, ACIRON_BADGE_PNG) {
+            eprintln!("[aciron-skins] не удалось записать badge png: {e}");
+            return None;
+        }
+    }
+    Some(png)
+}
 
 fn ensure_aciron_skins(root: &Path) -> Option<PathBuf> {
     let jar = root.join("aciron-skins.jar");

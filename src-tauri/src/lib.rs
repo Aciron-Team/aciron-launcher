@@ -14,7 +14,6 @@ mod modrinth;
 mod presence;
 mod realtime;
 mod recents;
-mod resourcepack;
 mod secret;
 mod servers;
 mod settings;

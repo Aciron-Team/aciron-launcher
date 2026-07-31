@@ -230,29 +230,34 @@ export default function WardrobePage() {
     }
   };
 
-  const seq = useRef(0);
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  // Клик по скину/плащу/модели только СТАВИТ выбор (превью), применение — по
+  // кнопке «Сохранить». pending хранит, что применить; dirty — есть ли что сохранять.
+  const pending = useRef<{ skin?: () => Promise<unknown>; cape?: () => Promise<unknown> }>({});
+  const [dirty, setDirty] = useState(false);
 
-  const send = (fn: () => Promise<unknown>) => {
-    const mine = ++seq.current;
-    queue.current = queue.current.then(async () => {
-      if (mine !== seq.current) return;
-      try {
-        await fn();
-        // Успех: обновляем данные и «бустим» URL своего скина/плаща, чтобы своя
-        // аватарка не показывалась из кэша старой (у чужих кэш остаётся — это ок).
-        if (mine === seq.current) {
-          await load();
-          setBust(Date.now());
-          toast("Сохранено", "success");
-        }
-      } catch (e) {
-        if (mine !== seq.current) return;
-        setInstant(null);
-        setBust(Date.now());
-        toast(human(e), "error");
+  const save = async () => {
+    const p = pending.current;
+    if (!p.skin && !p.cape) return;
+    pending.current = {};
+    setBusy("save");
+    try {
+      if (p.skin) {
+        const r = (await p.skin()) as ApplyResult | undefined;
+        if (r && r.error) toast(`На лицензию не применилось: ${r.error}`, "warning");
       }
-    });
+      if (p.cape) await p.cape();
+      await load();
+      setBust(Date.now());
+      setDirty(false);
+      toast("Сохранено", "success");
+    } catch (e) {
+      setInstant(null);
+      setBust(Date.now());
+      toast(human(e), "error");
+      void load();
+    } finally {
+      setBusy("");
+    }
   };
 
   // Оптимистичное изменение данных гардероба: применяем сразу, возвращаем токен отката.
@@ -298,15 +303,14 @@ export default function WardrobePage() {
 
   const wearSkin = (key: string, url: string, model: SkinModelId, apply: () => Promise<ApplyResult>) => {
     setInstant((s) => ({ ...s, skinKey: key, skinUrl: url, model }));
-    send(async () => {
-      const r = await apply();
-      if (r.error) toast(`На лицензию не применилось: ${r.error}`, "warning");
-    });
+    pending.current.skin = apply;
+    setDirty(true);
   };
 
   const wearCape = (key: string, url: string | null, apply: () => Promise<unknown>) => {
     setInstant((s) => ({ ...s, capeKey: key, capeUrl: url }));
-    send(apply);
+    pending.current.cape = apply;
+    setDirty(true);
   };
 
   const setModel = (model: SkinModelId) => {
@@ -315,10 +319,11 @@ export default function WardrobePage() {
     const item = data.skins.find((s) => s.id === id);
     if (!item) return;
     setInstant((s) => ({ ...s, model }));
-    void send(async () => {
+    pending.current.skin = async () => {
       await wardrobeRename(item.id, item.name, model);
       await wardrobeApply(item.id);
-    });
+    };
+    setDirty(true);
   };
 
   const saveEdit = () => {
@@ -413,7 +418,8 @@ export default function WardrobePage() {
       capeKey: cape ? `own:${cape.id}` : "off",
       capeUrl: cape ? textureUrl(cape) : null,
     });
-    send(() => outfitApply(o.id));
+    pending.current = { skin: () => outfitApply(o.id) };
+    setDirty(true);
   };
 
   const capeOff = () =>
@@ -521,6 +527,34 @@ export default function WardrobePage() {
               </button>
             ))}
           </div>
+
+          {}
+          <button
+            onClick={() => void save()}
+            disabled={!dirty || busy === "save"}
+            className={`mt-3 w-full rounded-3xl py-3 text-sm font-bold transition-colors ${
+              dirty && busy !== "save"
+                ? "bg-accent text-bg hover:bg-accent-hover"
+                : "cursor-default bg-card text-muted"
+            }`}
+          >
+            {busy === "save" ? (
+              <>
+                <i className="fa-solid fa-spinner fa-spin mr-2" />
+                Сохранение…
+              </>
+            ) : dirty ? (
+              <>
+                <i className="fa-solid fa-floppy-disk mr-2" />
+                Сохранить
+              </>
+            ) : (
+              <>
+                <i className="fa-solid fa-check mr-2" />
+                Сохранено
+              </>
+            )}
+          </button>
         </section>
 
         {}

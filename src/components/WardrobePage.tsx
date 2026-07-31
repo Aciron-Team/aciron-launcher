@@ -230,7 +230,12 @@ export default function WardrobePage() {
       if (mine !== seq.current) return;
       try {
         await fn();
-        if (mine === seq.current) await load();
+        // Успех: обновляем данные и «бустим» URL своего скина/плаща, чтобы своя
+        // аватарка не показывалась из кэша старой (у чужих кэш остаётся — это ок).
+        if (mine === seq.current) {
+          await load();
+          setBust(Date.now());
+        }
       } catch (e) {
         if (mine !== seq.current) return;
         setInstant(null);

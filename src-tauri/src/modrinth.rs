@@ -233,7 +233,30 @@ pub async fn import_mrpack(app: AppHandle, path: String) -> Result<Build, String
     let cl = http()?;
     emit(&app, "modpack", "Чтение файла модпака", 0, 1);
     let bytes = std::fs::read(&path).map_err(|e| format!("Не удалось прочитать файл: {e}"))?;
-    build_from_mrpack(&app, &cl, bytes, "").await
+    // Пытаемся опознать модпак на Modrinth по хешу файла: если это .mrpack,
+    // скачанный с Modrinth, подтянем иконку сборки и включим обновления.
+    let source_id = resolve_project_by_hash(&cl, &bytes).await;
+    build_from_mrpack(&app, &cl, bytes, &source_id).await
+}
+
+/// Ищет проект на Modrinth по SHA1 файла модпака. Возвращает id проекта или "".
+async fn resolve_project_by_hash(cl: &reqwest::Client, bytes: &[u8]) -> String {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    let hex: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    match cl
+        .get(format!("{API}/version_file/{hex}?algorithm=sha1"))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(r) => {
+            let v: Value = r.json().await.unwrap_or(Value::Null);
+            v["project_id"].as_str().unwrap_or("").to_string()
+        }
+        Err(_) => String::new(),
+    }
 }
 
 async fn build_from_mrpack(

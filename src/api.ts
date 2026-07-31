@@ -33,6 +33,77 @@ export function withTimeout<T>(p: Promise<T>, ms = 20000): Promise<T> {
   ]);
 }
 
+// ── Кэш read-only запросов: мгновенная отдача + фоновое обновление ───────────
+// Компоненты берут cachePeek(key) для мгновенного первого рендера, затем зовут
+// cached(key, ttl, fetcher) для актуализации. Мутации вызывают cacheBust(prefix).
+type CacheBox<T> = { at: number; data: T; inflight?: Promise<T> };
+const _cache = new Map<string, CacheBox<unknown>>();
+const _subs = new Map<string, Set<() => void>>();
+
+/** Синхронно достать закэшированное значение (для мгновенного первого рендера). */
+export function cachePeek<T>(key: string): T | undefined {
+  return _cache.get(key)?.data as T | undefined;
+}
+
+/** Сбросить кэш по точному ключу или префиксу (после мутаций). */
+export function cacheBust(prefix: string): void {
+  for (const k of [..._cache.keys()]) {
+    if (k === prefix || k.startsWith(prefix)) _cache.delete(k);
+  }
+  for (const k of [..._subs.keys()]) {
+    if (k === prefix || k.startsWith(prefix)) _emit(k);
+  }
+}
+
+/** Подписка на обновление ключа (компонент перерисуется после revalidate). */
+export function cacheSubscribe(key: string, cb: () => void): () => void {
+  let s = _subs.get(key);
+  if (!s) {
+    s = new Set();
+    _subs.set(key, s);
+  }
+  s.add(cb);
+  return () => s!.delete(cb);
+}
+function _emit(key: string): void {
+  _subs.get(key)?.forEach((cb) => {
+    try {
+      cb();
+    } catch {
+      /* подписчик размонтирован */
+    }
+  });
+}
+
+/**
+ * stale-while-revalidate: свежий кэш (< ttl) — сразу; устаревший — сразу старое
+ * значение + фоновое обновление с уведомлением подписчиков; нет данных — ждём.
+ * Параллельные вызовы одного ключа дедуплицируются.
+ */
+export async function cached<T>(key: string, ttl: number, fetcher: () => Promise<T>): Promise<T> {
+  const e = _cache.get(key) as CacheBox<T> | undefined;
+  const now = Date.now();
+  if (e && e.data !== undefined && now - e.at < ttl) return e.data;
+  if (e?.inflight) return e.inflight;
+  const run = fetcher()
+    .then((data) => {
+      _cache.set(key, { at: Date.now(), data });
+      _emit(key);
+      return data;
+    })
+    .catch((err) => {
+      const c = _cache.get(key) as CacheBox<T> | undefined;
+      if (c) c.inflight = undefined; // оставляем прежние данные, дадим повторить
+      throw err;
+    });
+  if (e && e.data !== undefined) {
+    e.inflight = run; // отдаём старое, обновляем в фоне
+    return e.data;
+  }
+  _cache.set(key, { at: 0, data: undefined as unknown as T, inflight: run });
+  return run;
+}
+
 const mockSettings: Settings = {
   java_path: "C:\\Program Files\\Java\\jdk-21\\bin\\java.exe",
   ram_mb: 4096,
@@ -229,6 +300,11 @@ const mockAccounts: AccountsState = {
 };
 
 export function accountsChanged() {
+  // Смена аккаунта: сбрасываем кэш гардероба/каталогов/лицензии
+  cacheBust("wardrobe");
+  cacheBust("license-capes");
+  cacheBust("skin-catalog");
+  cacheBust("cape-catalog");
   window.dispatchEvent(new Event("aciron-account"));
 }
 
@@ -476,8 +552,8 @@ export async function wardrobeList(): Promise<WardrobeData> {
       licensed: false,
     };
   }
-  // Ограничиваем время ожидания, чтобы не было бесконечного спиннера (HNS-07)
-  return withTimeout(invoke<WardrobeData>("wardrobe_list"));
+  // Кэш + таймаут: мгновенная отдача при повторном заходе, ревалидация в фоне
+  return cached("wardrobe", 30_000, () => withTimeout(invoke<WardrobeData>("wardrobe_list")));
 }
 
 export async function wardrobeAdd(
@@ -487,7 +563,9 @@ export async function wardrobeAdd(
   model: SkinModelId = "classic"
 ): Promise<WardrobeItem> {
   if (!isTauri) throw new Error("нет бэкенда");
-  return invoke<WardrobeItem>("wardrobe_add", { path, kind, name, model });
+  const item = await invoke<WardrobeItem>("wardrobe_add", { path, kind, name, model });
+  cacheBust("wardrobe");
+  return item;
 }
 
 export async function readTexture(path: string): Promise<string> {
@@ -499,12 +577,15 @@ export const MAX_SKINS = 10;
 
 export async function wardrobeApply(id: string): Promise<ApplyResult> {
   if (!isTauri) throw new Error("нет бэкенда");
-  return invoke<ApplyResult>("wardrobe_apply", { id });
+  const r = await invoke<ApplyResult>("wardrobe_apply", { id });
+  cacheBust("wardrobe");
+  return r;
 }
 
 export async function wardrobeDelete(id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("wardrobe_delete", { id });
+  cacheBust("wardrobe");
 }
 
 export async function wardrobeRename(
@@ -514,37 +595,40 @@ export async function wardrobeRename(
 ): Promise<void> {
   if (!isTauri) return;
   await invoke("wardrobe_rename", { id, name, model });
+  cacheBust("wardrobe");
 }
 
 export async function wardrobeCapeOff(): Promise<void> {
   if (!isTauri) return;
   await invoke("wardrobe_cape_off");
+  cacheBust("wardrobe");
 }
 
 export type CatalogCape = { id: string; name: string; url: string; by: string };
 
 export async function capeCatalog(): Promise<CatalogCape[]> {
   if (!isTauri) return [];
-  // Ограничиваем время ожидания первой загрузки каталога плащей (HNS-07)
-  return withTimeout(invoke<CatalogCape[]>("cape_catalog"));
+  return cached("cape-catalog", 1_800_000, () => withTimeout(invoke<CatalogCape[]>("cape_catalog")));
 }
 
 export async function capeCatalogApply(id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("cape_catalog_apply", { id });
+  cacheBust("wardrobe");
 }
 
 export type CatalogSkin = { id: string; name: string; url: string; model: SkinModelId };
 
 export async function skinCatalog(): Promise<CatalogSkin[]> {
   if (!isTauri) return [];
-  // Ограничиваем время ожидания первой загрузки каталога (HNS-07)
-  return withTimeout(invoke<CatalogSkin[]>("skin_catalog"));
+  return cached("skin-catalog", 1_800_000, () => withTimeout(invoke<CatalogSkin[]>("skin_catalog")));
 }
 
 export async function skinCatalogApply(id: string): Promise<ApplyResult> {
   if (!isTauri) throw new Error("нет бэкенда");
-  return invoke<ApplyResult>("skin_catalog_apply", { id });
+  const r = await invoke<ApplyResult>("skin_catalog_apply", { id });
+  cacheBust("wardrobe");
+  return r;
 }
 
 export type LicenseCape = { id: string; name: string; url: string; active: boolean };
@@ -552,13 +636,14 @@ export type LicenseCapes = { linked: boolean; capes: LicenseCape[] };
 
 export async function licenseCapes(): Promise<LicenseCapes> {
   if (!isTauri) return { linked: false, capes: [] };
-  // Ограничиваем время ожидания загрузки плащей с лицензии (HNS-07)
-  return withTimeout(invoke<LicenseCapes>("license_capes"));
+  return cached("license-capes", 60_000, () => withTimeout(invoke<LicenseCapes>("license_capes")));
 }
 
 export async function licenseCapeApply(cape_id: string | null): Promise<void> {
   if (!isTauri) return;
   await invoke("license_cape_apply", { capeId: cape_id });
+  cacheBust("license-capes");
+  cacheBust("wardrobe");
 }
 
 export async function outfitAdd(
@@ -568,17 +653,21 @@ export async function outfitAdd(
   model: SkinModelId
 ): Promise<Outfit> {
   if (!isTauri) throw new Error("нет бэкенда");
-  return invoke<Outfit>("outfit_add", { name, skinId: skin_id, capeId: cape_id, model });
+  const o = await invoke<Outfit>("outfit_add", { name, skinId: skin_id, capeId: cape_id, model });
+  cacheBust("wardrobe");
+  return o;
 }
 
 export async function outfitApply(id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("outfit_apply", { id });
+  cacheBust("wardrobe");
 }
 
 export async function outfitDelete(id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("outfit_delete", { id });
+  cacheBust("wardrobe");
 }
 
 export function friendSkinUrl(f: { username: string; hasSkin: boolean }): string {
@@ -668,7 +757,7 @@ export async function listVersions(): Promise<VersionInfo[]> {
       { id: "1.8.9", type: "release", release_time: "2015-12-09" },
     ];
   }
-  return invoke<VersionInfo[]>("list_versions");
+  return cached("mc-versions", 21_600_000, () => invoke<VersionInfo[]>("list_versions"));
 }
 
 export function headSkinUrl(account: Pick<Account, "username" | "skin_url">): string {
@@ -837,7 +926,8 @@ export async function modrinthSearch(
   project_type = "mod"
 ): Promise<ModSearch> {
   if (!isTauri) return { hits: [], total_hits: 0, offset: 0, limit };
-  return invoke<ModSearch>("modrinth_search", {
+  const key = "search:modrinth:" + JSON.stringify([query, loader, game_version, [...categories].sort(), index, offset, limit, project_type]);
+  return cached(key, 120_000, () => invoke<ModSearch>("modrinth_search", {
     query,
     loader,
     gameVersion: game_version,
@@ -846,7 +936,7 @@ export async function modrinthSearch(
     offset,
     limit,
     projectType: project_type,
-  });
+  }));
 }
 
 export async function installModpack(project_id: string, version_id?: string): Promise<Build> {
@@ -856,7 +946,7 @@ export async function installModpack(project_id: string, version_id?: string): P
 
 export async function modrinthCategories(): Promise<string[]> {
   if (!isTauri) return ["adventure", "optimization", "utility", "worldgen", "library"];
-  return invoke<string[]>("modrinth_categories");
+  return cached("cats:modrinth", 86_400_000, () => invoke<string[]>("modrinth_categories"));
 }
 
 export async function modrinthInstall(build_id: string, project_id: string): Promise<Build> {
@@ -889,7 +979,8 @@ export type ModProject = {
 };
 
 export async function modrinthProject(project_id: string): Promise<ModProject> {
-  return invoke<ModProject>("modrinth_project", { projectId: project_id });
+  return cached("proj:modrinth:" + project_id, 600_000, () =>
+    invoke<ModProject>("modrinth_project", { projectId: project_id }));
 }
 
 export type ModVersion = {
@@ -905,7 +996,8 @@ export type ModVersion = {
 
 export async function projectVersions(project_id: string): Promise<ModVersion[]> {
   if (!isTauri) return [];
-  return invoke<ModVersion[]>("project_versions", { projectId: project_id });
+  return cached("vers:modrinth:" + project_id, 600_000, () =>
+    invoke<ModVersion[]>("project_versions", { projectId: project_id }));
 }
 
 export async function modrinthInstallVersion(
@@ -932,7 +1024,8 @@ export async function curseforgeSearch(
   project_type = "mod"
 ): Promise<ModSearch> {
   if (!isTauri) return { hits: [], total_hits: 0, offset: 0, limit };
-  return invoke<ModSearch>("curseforge_search", {
+  const key = "search:curseforge:" + JSON.stringify([query, loader, game_version, [...categories].sort(), index, offset, limit, project_type]);
+  return cached(key, 120_000, () => invoke<ModSearch>("curseforge_search", {
     query,
     loader,
     gameVersion: game_version,
@@ -941,12 +1034,12 @@ export async function curseforgeSearch(
     offset,
     limit,
     projectType: project_type,
-  });
+  }));
 }
 
 export async function curseforgeCategories(): Promise<string[]> {
   if (!isTauri) return [];
-  return invoke<string[]>("curseforge_categories");
+  return cached("cats:curseforge", 86_400_000, () => invoke<string[]>("curseforge_categories"));
 }
 
 export async function curseforgeInstall(build_id: string, project_id: string): Promise<Build> {
@@ -955,12 +1048,14 @@ export async function curseforgeInstall(build_id: string, project_id: string): P
 }
 
 export async function curseforgeProject(project_id: string): Promise<ModProject> {
-  return invoke<ModProject>("curseforge_project", { projectId: project_id });
+  return cached("proj:curseforge:" + project_id, 600_000, () =>
+    invoke<ModProject>("curseforge_project", { projectId: project_id }));
 }
 
 export async function curseforgeProjectVersions(project_id: string): Promise<ModVersion[]> {
   if (!isTauri) return [];
-  return invoke<ModVersion[]>("curseforge_project_versions", { projectId: project_id });
+  return cached("vers:curseforge:" + project_id, 600_000, () =>
+    invoke<ModVersion[]>("curseforge_project_versions", { projectId: project_id }));
 }
 
 export async function curseforgeInstallVersion(
@@ -986,16 +1081,19 @@ export async function curseforgeInstallModpack(project_id: string, version_id?: 
 
 export async function ftbSearch(query: string, offset: number, limit: number): Promise<ModSearch> {
   if (!isTauri) return { hits: [], total_hits: 0, offset: 0, limit };
-  return invoke<ModSearch>("ftb_search", { query, offset, limit });
+  const key = "search:ftb:" + JSON.stringify([query, offset, limit]);
+  return cached(key, 120_000, () => invoke<ModSearch>("ftb_search", { query, offset, limit }));
 }
 
 export async function ftbProject(project_id: string): Promise<ModProject> {
-  return invoke<ModProject>("ftb_project", { projectId: project_id });
+  return cached("proj:ftb:" + project_id, 600_000, () =>
+    invoke<ModProject>("ftb_project", { projectId: project_id }));
 }
 
 export async function ftbProjectVersions(project_id: string): Promise<ModVersion[]> {
   if (!isTauri) return [];
-  return invoke<ModVersion[]>("ftb_project_versions", { projectId: project_id });
+  return cached("vers:ftb:" + project_id, 600_000, () =>
+    invoke<ModVersion[]>("ftb_project_versions", { projectId: project_id }));
 }
 
 export async function ftbInstallModpack(project_id: string, version_id?: string): Promise<Build> {

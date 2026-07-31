@@ -5,7 +5,7 @@ import { getRecents, removeRecent, type Recent } from "../api";
 import { CARD_FALL_MS } from "../anim";
 import { useFlip } from "../hooks/useFlip";
 
-export default function Home() {
+export default function Home({ onOpenBuild }: { onOpenBuild?: (buildId: string) => void }) {
   const [recents, setRecents] = useState<Recent[]>([]);
   const [dying, setDying] = useState<string[]>([]);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -61,6 +61,7 @@ export default function Home() {
                   index={i}
                   dying={dying.includes(r.id)}
                   onRemove={() => drop(r.id)}
+                  onOpen={onOpenBuild}
                 />
               ))}
             </div>

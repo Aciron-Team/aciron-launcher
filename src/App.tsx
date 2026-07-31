@@ -58,6 +58,7 @@ function AppInner() {
   const [migratePrompt, setMigratePrompt] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifySound, setNotifySound] = useState(true);
+  const [openBuildId, setOpenBuildId] = useState<string | null>(null);
 
   const showBottomBar = active !== "builds" && active !== "servers" && active !== "wardrobe";
 
@@ -153,8 +154,17 @@ function AppInner() {
             <div className="flex min-w-0 flex-1 flex-col">
               {}
               <main className="min-h-0 flex-1 overflow-hidden">
-                {active === "home" && <Home />}
-                {active === "builds" && <BuildsPage />}
+                {active === "home" && (
+                  <Home
+                    onOpenBuild={(id) => {
+                      setOpenBuildId(id);
+                      setActive("builds");
+                    }}
+                  />
+                )}
+                {active === "builds" && (
+                  <BuildsPage openBuildId={openBuildId} onOpened={() => setOpenBuildId(null)} />
+                )}
                 {active === "wardrobe" && (
                   <Suspense
                     fallback={

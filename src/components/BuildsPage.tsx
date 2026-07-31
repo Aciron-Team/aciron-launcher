@@ -94,7 +94,13 @@ type View = "list" | "detail" | "browse";
 
 type ModFilter = "all" | "on" | "off" | "outdated";
 
-export default function BuildsPage() {
+export default function BuildsPage({
+  openBuildId,
+  onOpened,
+}: {
+  openBuildId?: string | null;
+  onOpened?: () => void;
+} = {}) {
   const [builds, setBuilds] = useState<Build[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("list");
@@ -188,6 +194,18 @@ export default function BuildsPage() {
 
     }
   };
+
+  // Открытие конкретной сборки по запросу извне (например, с «Последних запусков»).
+  const openedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openBuildId || openedRef.current === openBuildId) return;
+    if (builds.some((b) => b.id === openBuildId)) {
+      openedRef.current = openBuildId;
+      openBuild(openBuildId);
+      onOpened?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openBuildId, builds]);
 
   const doRefresh = async () => {
     if (!selected) return;

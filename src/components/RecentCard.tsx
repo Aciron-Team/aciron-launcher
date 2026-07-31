@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { type Recent } from "../api";
+import { useEffect, useState } from "react";
+import { getBuildImage, type Recent } from "../api";
 import { cardInDelay } from "../anim";
 import { coverFor } from "../covers";
 import { useLauncherCtx } from "../LauncherContext";
@@ -15,6 +15,7 @@ export default function RecentCard({
   index = 0,
   dying = false,
   onRemove,
+  onOpen,
 }: {
   recent: Recent;
 
@@ -22,20 +23,39 @@ export default function RecentCard({
 
   dying?: boolean;
   onRemove: () => void;
+  onOpen?: (buildId: string) => void;
 }) {
-  const img = coverFor(recent.id, recent.mc_version);
+  const isBuild = recent.kind === "build";
+  const buildId = isBuild ? recent.id.replace(/^build:/, "") : "";
   const { launch, isRunning, stop } = useLauncherCtx();
+
+  // Настоящая иконка сборки (как в списке сборок), иначе — статичная обложка.
+  const [buildImg, setBuildImg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isBuild) return;
+    let alive = true;
+    getBuildImage(buildId)
+      .then((s) => alive && setBuildImg(s))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [isBuild, buildId]);
+
+  const img = buildImg ?? coverFor(recent.id, recent.mc_version);
 
   const [busy, setBusy] = useState(false);
   const running = isRunning(recent.id);
+  const openable = isBuild && !!onOpen;
 
   return (
     <div
       data-flip-id={recent.id}
       style={dying ? undefined : cardInDelay(index)}
+      onClick={openable ? () => onOpen!(buildId) : undefined}
       className={`group relative h-[150px] w-[285px] border-[#232427]/65 border-1 shrink-0 overflow-hidden rounded-[16px] bg-card ${
         dying ? "card-fall" : "card-in"
-      }`}
+      } ${openable ? "cursor-pointer" : ""}`}
     >
       {img ? (
         <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -49,8 +69,19 @@ export default function RecentCard({
       <div className="absolute inset-0 bg-black/80" />
 
       {}
+      {openable && (
+        <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-lg bg-black/45 px-2 py-1 text-[10px] font-medium text-white/80 opacity-0 transition group-hover:opacity-100">
+          <i className="fa-solid fa-arrow-up-right-from-square text-[9px]" />
+          Открыть сборку
+        </div>
+      )}
+
+      {}
       <button
-        onClick={onRemove}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
         title="Убрать из последних запусков"
         className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-lg bg-black/50 text-white/70 opacity-0 transition hover:bg-[#FF3535]/50 hover:text-white group-hover:opacity-100"
       >
@@ -66,14 +97,18 @@ export default function RecentCard({
         </div>
         {running ? (
           <button
-            onClick={() => stop(recent.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              stop(recent.id);
+            }}
             className="h-9 shrink-0 rounded-lg bg-[#ef4444] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#dc2626]"
           >
             Закрыть
           </button>
         ) : (
           <button
-            onClick={async () => {
+            onClick={async (e) => {
+              e.stopPropagation();
               if (busy) return;
               setBusy(true);
               try {

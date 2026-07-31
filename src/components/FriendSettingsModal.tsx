@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import Head from "./Head";
 import { useToast } from "../ToastContext";
-import { refreshFriends } from "../friends";
+import { patchFriends, restoreFriends } from "../friends";
 import {
   getAccounts,
   headSkinUrl,
@@ -131,14 +131,20 @@ export default function FriendSettingsModal({
 
   const pickStatus = (id: PresenceStatus) => {
     patch({ status: id });
-    setPresenceStatus(id)
-      .then(refreshFriends)
-      .catch(fail);
+    const prev = patchFriends((d) => ({ ...d, me: { ...d.me, status: id } }));
+    setPresenceStatus(id).catch((e) => {
+      restoreFriends(prev);
+      fail(e);
+    });
   };
 
   const toggleAccepting = (v: boolean) => {
     patch({ acceptRequests: v });
-    setAcceptRequests(v).then(refreshFriends).catch(fail);
+    const prev = patchFriends((d) => ({ ...d, me: { ...d.me, acceptRequests: v } }));
+    setAcceptRequests(v).catch((e) => {
+      restoreFriends(prev);
+      fail(e);
+    });
   };
 
   const nick = account?.aciron_name || account?.username || "Player";

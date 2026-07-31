@@ -133,6 +133,9 @@ pub struct Settings {
 
     #[serde(default = "default_true")]
     pub notify_sound: bool,
+
+    #[serde(default = "default_true")]
+    pub launcher_badges: bool,
 }
 
 fn default_ui_scale() -> u32 {
@@ -164,6 +167,7 @@ impl Default for Settings {
             fullscreen: false,
             ui_scale: 100,
             notify_sound: true,
+            launcher_badges: true,
         }
     }
 }

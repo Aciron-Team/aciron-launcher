@@ -24,6 +24,8 @@ import {
   getSettings,
   hardwareCapable,
   firstRunPending,
+  isTauri,
+  openUrl,
   scanExternalInstances,
   dataMigrationPending,
   type ExternalInstance,
@@ -116,6 +118,24 @@ function AppInner() {
   useLayoutEffect(() => {
     (window as unknown as { __acironScale: number }).__acironScale = scale;
   }, [scale]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let stop: (() => void) | undefined;
+    let dead = false;
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const un = await listen<{ url: string; embedded?: boolean }>("ms-auth-open", (e) => {
+        if (!e.payload.embedded) openUrl(e.payload.url);
+      });
+      if (dead) un();
+      else stop = un;
+    })();
+    return () => {
+      dead = true;
+      stop?.();
+    };
+  }, []);
 
   useEffect(() => {
     getSettings().then(async (s) => {

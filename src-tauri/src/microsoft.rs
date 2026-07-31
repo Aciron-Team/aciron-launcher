@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -20,8 +20,35 @@ const SCOPE: &str = "XboxLive.signin offline_access";
 fn http() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent("AcironLauncher/0.1")
+
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())
+}
+
+const AUTH_WINDOW: &str = "ms-auth";
+
+fn open_auth_window(app: &AppHandle, url: &str) -> Option<tauri::WebviewWindow> {
+    let parsed = url.parse().ok()?;
+
+    if let Some(old) = app.get_webview_window(AUTH_WINDOW) {
+        let _ = old.close();
+    }
+    match tauri::WebviewWindowBuilder::new(app, AUTH_WINDOW, tauri::WebviewUrl::External(parsed))
+        .title("Вход через Microsoft")
+        .inner_size(520.0, 720.0)
+        .min_inner_size(400.0, 560.0)
+        .center()
+        .focused(true)
+        .build()
+    {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("[microsoft] окно входа не открылось ({e}) — уходим в браузер");
+            None
+        }
+    }
 }
 
 fn urlencode(s: &str) -> String {
@@ -85,17 +112,50 @@ pub async fn interactive_login(app: AppHandle) -> Result<Account, String> {
     let verifier = URL_SAFE_NO_PAD.encode(raw);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
 
+    let state: String = rand::Rng::gen::<[u8; 16]>(&mut rand::thread_rng())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+
     let auth_url = format!(
         "{AUTH_URL}?client_id={cid}&response_type=code&redirect_uri={ru}&response_mode=query\
-         &scope={sc}&code_challenge={ch}&code_challenge_method=S256&prompt=select_account",
+         &scope={sc}&code_challenge={ch}&code_challenge_method=S256&state={st}&prompt=select_account",
         cid = CLIENT_ID,
         ru = urlencode(&redirect),
         sc = urlencode(SCOPE),
         ch = challenge,
+        st = state,
     );
-    let _ = app.emit("ms-auth-open", json!({ "url": auth_url }));
 
-    let code = wait_for_code(&listener, Duration::from_secs(300)).await?;
+    let auth_window = open_auth_window(&app, &auth_url);
+
+    let _ = app.emit(
+        "ms-auth-open",
+        json!({ "url": auth_url, "embedded": auth_window.is_some() }),
+    );
+
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
+    if let Some(w) = &auth_window {
+        let tx = std::sync::Mutex::new(Some(closed_tx));
+        w.on_window_event(move |e| {
+            if matches!(e, tauri::WindowEvent::Destroyed) {
+                if let Ok(mut g) = tx.lock() {
+                    if let Some(t) = g.take() {
+                        let _ = t.send(());
+                    }
+                }
+            }
+        });
+    }
+
+    let code = tokio::select! {
+        r = wait_for_code(&listener, Duration::from_secs(300), &state) => r,
+        _ = closed_rx => Err("Окно входа Microsoft закрыто — вход отменён".to_string()),
+    };
+    if let Some(w) = &auth_window {
+        let _ = w.close();
+    }
+    let code = code?;
 
     let cl = http()?;
     let tok: Value = cl
@@ -128,7 +188,11 @@ pub async fn interactive_login(app: AppHandle) -> Result<Account, String> {
     finish_login(&cl, &ms_access, &refresh).await
 }
 
-async fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<String, String> {
+async fn wait_for_code(
+    listener: &TcpListener,
+    timeout: Duration,
+    expected_state: &str,
+) -> Result<String, String> {
     let accept = async {
         loop {
             let (mut stream, _) = listener.accept().await.map_err(|e| e.to_string())?;
@@ -154,6 +218,14 @@ async fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<Stri
                 return Err(format!("Microsoft: {}", urldecode(err)));
             }
             if let Some(code) = params.get("code") {
+
+                let got_state = params.get("state").map(|s| urldecode(s)).unwrap_or_default();
+                if got_state != expected_state {
+                    eprintln!("[microsoft] OAuth: несовпадение state — запрос отклонён");
+                    let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n").await;
+                    let _ = stream.flush().await;
+                    continue;
+                }
                 reply(&mut stream, "Готово! Вернитесь в Aciron Launcher — вкладку можно закрыть.").await;
                 return Ok(urldecode(code));
             }

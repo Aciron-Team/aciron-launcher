@@ -1,5 +1,6 @@
 mod accounts;
 mod aciron;
+mod bridge;
 mod builds;
 mod cancel;
 mod curseforge;
@@ -11,7 +12,10 @@ mod launcher;
 mod microsoft;
 mod modrinth;
 mod presence;
+mod realtime;
 mod recents;
+mod resourcepack;
+mod secret;
 mod servers;
 mod settings;
 mod social;
@@ -34,11 +38,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|_app| {
+        .setup(|app| {
 
             std::thread::spawn(discord::init);
 
             tauri::async_runtime::spawn(presence::heartbeat_loop());
+
+            tauri::async_runtime::spawn(realtime::connect_loop(app.handle().clone()));
+
+            tauri::async_runtime::spawn(bridge::serve());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -78,6 +86,7 @@ pub fn run() {
             social::friend_remove,
             social::set_presence_status,
             social::set_accept_requests,
+            realtime::realtime_connected,
             wardrobe::wardrobe_list,
             wardrobe::wardrobe_add,
             wardrobe::read_texture,

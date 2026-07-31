@@ -1,6 +1,7 @@
 use serde::Serialize;
+use std::time::Duration;
 
-pub const APP_VERSION: &str = "0.7.7";
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const GITHUB_REPO: &str = "Acizecu/aciron-launcher";
 
@@ -48,6 +49,9 @@ pub async fn check_update() -> UpdateInfo {
     let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
     let client = match reqwest::Client::builder()
         .user_agent("AcironLauncher/0.1 (aciron.pro)")
+
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(20))
         .build()
     {
         Ok(c) => c,

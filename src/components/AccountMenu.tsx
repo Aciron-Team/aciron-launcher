@@ -9,7 +9,6 @@ import {
   acironLinkLicense,
   headSkinUrl,
   openUrl,
-  isTauri,
   ACIRON_ID_WEB,
 } from "../api";
 import Head from "./Head";
@@ -47,12 +46,8 @@ export default function AccountMenu() {
     setWarn(false);
     setLinking(true);
     setLinkMsg("Открываем вход Microsoft в браузере…");
-    let unlisten: (() => void) | undefined;
+
     try {
-      if (isTauri) {
-        const { listen } = await import("@tauri-apps/api/event");
-        unlisten = await listen<{ url: string }>("ms-auth-open", (e) => openUrl(e.payload.url));
-      }
       await acironLinkLicense(active.id);
       setLinkMsg("");
       refresh();
@@ -60,7 +55,6 @@ export default function AccountMenu() {
       setLinkMsg(String(e).replace(/^Error:\s*/, ""));
     } finally {
       setLinking(false);
-      unlisten?.();
     }
   };
 

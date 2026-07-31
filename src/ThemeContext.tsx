@@ -20,65 +20,48 @@ export type Palette = {
   ctrlHover: string;
 };
 
-export type PresetId =
-  | "standard"
-  | "dark"
-  | "ocean"
-  | "dracula"
-  | "forest"
-  | "rose";
-export type ThemeId = PresetId | "custom";
-
-export const PRESET_LIST: { id: PresetId; label: string; accent: string; accentHover: string; accentActive: string }[] = [
-  { id: "standard", label: "Aciron", accent: "#f5a96b", accentHover: "#ffbc85", accentActive: "#d98f52" },
-  { id: "dark", label: "Amethyst", accent: "#a855f7", accentHover: "#c084fc", accentActive: "#8b3ce0" },
-  { id: "ocean", label: "Ocean", accent: "#38bdf8", accentHover: "#7dd3fc", accentActive: "#0ea5e9" },
-  { id: "dracula", label: "Dracula", accent: "#bd93f9", accentHover: "#d6b6ff", accentActive: "#a271f0" },
-  { id: "forest", label: "Forest", accent: "#4ade80", accentHover: "#86efac", accentActive: "#22c55e" },
-  { id: "rose", label: "Rosé", accent: "#fb7185", accentHover: "#fda4af", accentActive: "#e11d48" },
+export const TOKENS: { key: keyof Palette; label: string; hint: string }[] = [
+  { key: "bg", label: "Фон окна", hint: "самый нижний слой" },
+  { key: "panel", label: "Панели", hint: "боковое меню, нижняя панель" },
+  { key: "card", label: "Карточки", hint: "карточки, поля ввода" },
+  { key: "border", label: "Границы", hint: "рамки и разделители" },
+  { key: "text", label: "Текст", hint: "основной" },
+  { key: "muted", label: "Текст тусклый", hint: "подписи и подсказки" },
+  { key: "accent", label: "Акцент", hint: "кнопки, иконки, выделение" },
+  { key: "accentHover", label: "Акцент: наведение", hint: "" },
+  { key: "accentActive", label: "Акцент: нажатие", hint: "" },
+  { key: "ctrlHover", label: "Кнопки окна", hint: "заливка при наведении" },
 ];
-
-export const SURFACE = {
-  bg: "#131315",
-  panel: "#1c1c1f",
-  card: "#232327",
-  border: "#2e2e33",
-  ctrlHover: "#232327",
-} as const;
-
-const TEXT = { text: "#d9d9d9", muted: "#818181" };
-
-function paletteOfAccent(accent: string, hover: string, active: string): Palette {
-  return {
-    ...SURFACE,
-    ...TEXT,
-    accent,
-    accentHover: hover,
-    accentActive: active,
-  };
-}
-
-export const PRESETS: Record<PresetId, Palette> = Object.fromEntries(
-  PRESET_LIST.map((t) => [t.id, paletteOfAccent(t.accent, t.accentHover, t.accentActive)])
-) as Record<PresetId, Palette>;
 
 function clamp(n: number) {
   return Math.max(0, Math.min(255, Math.round(n)));
 }
+
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
   const v =
     h.length === 3
-      ? h.split("").map((c) => c + c).join("")
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
       : h.padEnd(6, "0").slice(0, 6);
   return [
-    parseInt(v.slice(0, 2), 16),
-    parseInt(v.slice(2, 4), 16),
-    parseInt(v.slice(4, 6), 16),
+    parseInt(v.slice(0, 2), 16) || 0,
+    parseInt(v.slice(2, 4), 16) || 0,
+    parseInt(v.slice(4, 6), 16) || 0,
   ];
 }
+
 function rgbToHex(r: number, g: number, b: number): string {
   return "#" + [r, g, b].map((c) => clamp(c).toString(16).padStart(2, "0")).join("");
+}
+
+export function normalizeHex(input: string): string | null {
+  const h = input.trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{3}$/.test(h) && !/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  const [r, g, b] = hexToRgb(h);
+  return rgbToHex(r, g, b);
 }
 
 function shade(hex: string, t: number): string {
@@ -87,13 +70,149 @@ function shade(hex: string, t: number): string {
   const k = Math.abs(t);
   return rgbToHex(r + (target - r) * k, g + (target - g) * k, b + (target - b) * k);
 }
-function luminance(hex: string): number {
+
+export function luminance(hex: string): number {
   const [r, g, b] = hexToRgb(hex);
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 }
 
-export function buildCustom(accent: string): Palette {
-  return paletteOfAccent(accent, shade(accent, 0.16), shade(accent, -0.16));
+export function contrast(a: string, b: string): number {
+  const lin = (hex: string) => {
+    const [r, g, bl] = hexToRgb(hex).map((c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [x, y] = [lin(a), lin(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+
+export type ThemeSeed = {
+
+  accent: string;
+
+  base: string;
+
+  text?: string;
+
+  muted?: string;
+};
+
+export function buildPalette(seed: ThemeSeed): Palette {
+  const dark = luminance(seed.base) < 0.5;
+  const step = (k: number) => shade(seed.base, dark ? k : -k);
+  const text = seed.text ?? (dark ? "#d9d9d9" : "#1b1b1e");
+  return {
+    bg: seed.base,
+    panel: step(0.05),
+    card: step(0.09),
+    border: step(0.15),
+    ctrlHover: step(0.09),
+    text,
+    muted: seed.muted ?? shade(text, dark ? -0.42 : 0.42),
+    accent: seed.accent,
+    accentHover: shade(seed.accent, 0.16),
+    accentActive: shade(seed.accent, -0.16),
+  };
+}
+
+export type PresetId =
+  | "standard"
+  | "amethyst"
+  | "ocean"
+  | "dracula"
+  | "forest"
+  | "rose"
+  | "carbon"
+  | "nord"
+  | "sand"
+  | "daylight";
+
+export type ThemeId = PresetId | "custom";
+
+export const PRESET_LIST: { id: PresetId; label: string; seed: ThemeSeed }[] = [
+  { id: "standard", label: "Aciron", seed: { accent: "#f5a96b", base: "#131315" } },
+  { id: "amethyst", label: "Amethyst", seed: { accent: "#a855f7", base: "#141019" } },
+  { id: "ocean", label: "Ocean", seed: { accent: "#38bdf8", base: "#0e161d" } },
+  { id: "dracula", label: "Dracula", seed: { accent: "#bd93f9", base: "#191a26" } },
+  { id: "forest", label: "Forest", seed: { accent: "#4ade80", base: "#101711" } },
+  { id: "rose", label: "Rosé", seed: { accent: "#fb7185", base: "#191114" } },
+  { id: "carbon", label: "Carbon", seed: { accent: "#9ca3af", base: "#0d0d0e" } },
+  { id: "nord", label: "Nord", seed: { accent: "#88c0d0", base: "#2e3440" } },
+  { id: "sand", label: "Sand", seed: { accent: "#b4762c", base: "#f2ede4" } },
+  { id: "daylight", label: "Daylight", seed: { accent: "#2563eb", base: "#f6f7f9" } },
+];
+
+export const PRESETS: Record<PresetId, Palette> = Object.fromEntries(
+  PRESET_LIST.map((t) => [t.id, buildPalette(t.seed)])
+) as Record<PresetId, Palette>;
+
+export const SURFACE = PRESETS.standard;
+
+export type SavedPreset = { id: string; name: string; palette: Palette };
+
+type ThemeState = {
+  id: ThemeId;
+
+  seed: ThemeSeed;
+
+  overrides: Partial<Palette>;
+  saved: SavedPreset[];
+};
+
+const STORAGE_KEY = "aciron:theme";
+
+const DEFAULT_STATE: ThemeState = {
+  id: "standard",
+  seed: { accent: "#6366f1", base: "#131315" },
+  overrides: {},
+  saved: [],
+};
+
+export function customPalette(s: ThemeState): Palette {
+  return { ...buildPalette(s.seed), ...s.overrides };
+}
+
+export function paletteOf(s: ThemeState): Palette {
+  return s.id === "custom" ? customPalette(s) : PRESETS[s.id] ?? PRESETS.standard;
+}
+
+function load(): ThemeState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_STATE;
+    const old = JSON.parse(raw) as Partial<ThemeState> & {
+      customAccent?: string;
+      saved?: (SavedPreset | { id: string; name: string; accent: string })[];
+    };
+
+    const seed: ThemeSeed = old.seed ?? {
+      accent: old.customAccent || DEFAULT_STATE.seed.accent,
+      base: DEFAULT_STATE.seed.base,
+    };
+
+    const saved: SavedPreset[] = (old.saved ?? []).map((p) => {
+      if ("palette" in p && p.palette) return p as SavedPreset;
+      const legacy = p as unknown as { id: string; name: string; accent: string };
+      return {
+        id: legacy.id,
+        name: legacy.name,
+        palette: buildPalette({ accent: legacy.accent, base: DEFAULT_STATE.seed.base }),
+      };
+    });
+
+    const id = ((old.id as string) === "dark" ? "amethyst" : old.id) as ThemeId | undefined;
+
+    return {
+      id: id && (id === "custom" || id in PRESETS) ? id : DEFAULT_STATE.id,
+      seed,
+      overrides: old.overrides ?? {},
+      saved,
+    };
+  } catch {
+    return DEFAULT_STATE;
+  }
 }
 
 function applyPalette(p: Palette) {
@@ -111,36 +230,35 @@ function applyPalette(p: Palette) {
     "--color-ctrl-hover": p.ctrlHover,
   };
   for (const [k, v] of Object.entries(map)) root.style.setProperty(k, v);
+
   root.style.colorScheme = luminance(p.bg) < 0.5 ? "dark" : "light";
 }
 
-export type SavedPreset = { id: string; name: string; accent: string };
+const SHARE_PREFIX = "aciron-theme-1:";
 
-type ThemeState = {
-  id: ThemeId;
-  customAccent: string;
-  saved: SavedPreset[];
-};
-
-const STORAGE_KEY = "aciron:theme";
-const DEFAULT_STATE: ThemeState = {
-  id: "standard",
-  customAccent: "#6366f1",
-  saved: [],
-};
-
-function load(): ThemeState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_STATE, ...JSON.parse(raw) };
-  } catch {
-
-  }
-  return DEFAULT_STATE;
+export function exportTheme(name: string, palette: Palette): string {
+  const json = JSON.stringify({ n: name, p: palette });
+  return SHARE_PREFIX + btoa(unescape(encodeURIComponent(json)));
 }
 
-export function paletteOf(s: ThemeState): Palette {
-  return s.id === "custom" ? buildCustom(s.customAccent) : PRESETS[s.id];
+export function importTheme(code: string): { name: string; palette: Palette } | null {
+  try {
+    const body = code.trim().replace(new RegExp("^" + SHARE_PREFIX, "i"), "");
+    const json = decodeURIComponent(escape(atob(body)));
+    const data = JSON.parse(json) as { n?: string; p?: Partial<Palette> };
+    if (!data.p) return null;
+
+    const out: Partial<Palette> = {};
+    for (const { key } of TOKENS) {
+      const v = data.p[key];
+      const hex = typeof v === "string" ? normalizeHex(v) : null;
+      if (!hex) return null;
+      out[key] = hex;
+    }
+    return { name: (data.n || "Тема").slice(0, 24), palette: out as Palette };
+  } catch {
+    return null;
+  }
 }
 
 type Ctx = {
@@ -148,10 +266,16 @@ type Ctx = {
   palette: Palette;
   saved: SavedPreset[];
   setTheme: (id: ThemeId) => void;
-  setCustom: (patch: Partial<Pick<ThemeState, "customAccent">>) => void;
-  savePreset: (name: string) => void;
+
+  setSeed: (patch: Partial<ThemeSeed>) => void;
+
+  setToken: (key: keyof Palette, value: string | null) => void;
+
+  resetTokens: () => void;
+  savePreset: (name: string, palette?: Palette) => void;
   applySaved: (p: SavedPreset) => void;
   deleteSaved: (id: string) => void;
+  renameSaved: (id: string, name: string) => void;
 };
 
 const ThemeCtx = createContext<Ctx | null>(null);
@@ -171,18 +295,44 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     palette,
     saved: state.saved,
     setTheme: (id) => setState((s) => ({ ...s, id })),
-    setCustom: (patch) => setState((s) => ({ ...s, id: "custom", ...patch })),
-    savePreset: (name) =>
+    setSeed: (patch) =>
+      setState((s) => ({ ...s, id: "custom", seed: { ...s.seed, ...patch } })),
+    setToken: (key, val) =>
+      setState((s) => {
+        const overrides = { ...s.overrides };
+        if (val === null) delete overrides[key];
+        else overrides[key] = val;
+        return { ...s, id: "custom", overrides };
+      }),
+    resetTokens: () => setState((s) => ({ ...s, overrides: {} })),
+    savePreset: (name, pal) =>
       setState((s) => ({
         ...s,
         saved: [
           ...s.saved,
-          { id: String(Date.now()), name: name.trim(), accent: s.customAccent },
+          {
+            id: String(Date.now()),
+            name: name.trim().slice(0, 24) || "Без названия",
+            palette: pal ?? paletteOf(s),
+          },
         ],
       })),
+
     applySaved: (p) =>
-      setState((s) => ({ ...s, id: "custom", customAccent: p.accent })),
+      setState((s) => ({
+        ...s,
+        id: "custom",
+        seed: { accent: p.palette.accent, base: p.palette.bg },
+        overrides: { ...p.palette },
+      })),
     deleteSaved: (id) => setState((s) => ({ ...s, saved: s.saved.filter((p) => p.id !== id) })),
+    renameSaved: (id, name) =>
+      setState((s) => ({
+        ...s,
+        saved: s.saved.map((p) =>
+          p.id === id ? { ...p, name: name.trim().slice(0, 24) || p.name } : p
+        ),
+      })),
   };
 
   return <ThemeCtx.Provider value={value}>{children}</ThemeCtx.Provider>;

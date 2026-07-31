@@ -168,10 +168,7 @@ export default function AddAccountModal({
     let unlisten: (() => void) | undefined;
     if (isTauri) {
       const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<{ url: string }>("ms-auth-open", (e) => {
-        setAuthUrl(e.payload.url);
-        openUrl(e.payload.url);
-      });
+      unlisten = await listen<{ url: string }>("ms-auth-open", (e) => setAuthUrl(e.payload.url));
     } else {
       setAuthUrl("https://login.microsoftonline.com/");
     }

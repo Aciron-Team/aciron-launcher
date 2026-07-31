@@ -1,6 +1,6 @@
 [package]
 name = "aciron-launcher"
-version = "0.1.0"
+version = "0.8.7"
 description = "Aciron Minecraft Launcher"
 authors = ["acizecu"]
 edition = "2021"
@@ -26,6 +26,9 @@ dirs = "5"
 # stream — потоковая загрузка (bytes_stream), нужна чтобы рвать соединение при отмене
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 tokio = { version = "1", features = ["full"] }
+# WebSocket присутствия. native-tls намеренно: reqwest здесь тоже на native-tls,
+# и второй стек TLS в сборке не нужен.
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures = "0.3"
 zip = "2"
 md5 = "0.7"

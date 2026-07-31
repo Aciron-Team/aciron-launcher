@@ -45,7 +45,7 @@ import {
 type Tab = "skins" | "outfits" | "capes";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "skins", label: "Скины" },
+  { id: "skins", label: "Мои скины" },
   { id: "capes", label: "Плащи" },
   { id: "outfits", label: "Образы" },
 ];

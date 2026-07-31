@@ -20,6 +20,8 @@ export type Settings = {
   ui_scale: number;
 
   notify_sound: boolean;
+
+  launcher_badges: boolean;
 };
 
 export const isTauri =
@@ -174,6 +176,7 @@ const mockSettings: Settings = {
   fullscreen: false,
   ui_scale: 100,
   notify_sound: true,
+  launcher_badges: true,
 };
 
 export async function getSettings(): Promise<Settings> {

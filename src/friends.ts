@@ -1,8 +1,15 @@
 
 import { useSyncExternalStore } from "react";
-import { cachePeek, friendsList, type FriendPresence, type FriendsData, type PresenceState } from "./api";
+import {
+  cachePeek,
+  friendsList,
+  isTauri,
+  type FriendPresence,
+  type FriendsData,
+  type PresenceState,
+} from "./api";
 
-const POLL_MS = 15_000;
+const POLL_MS = 90_000;
 
 export type FriendsSnapshot = {
   data: FriendsData | null;
@@ -64,6 +71,25 @@ const onAccount = () => {
 };
 const onFocus = () => void fetchOnce();
 
+function listenRealtime(): () => void {
+  if (!isTauri) return () => {};
+  let dead = false;
+  let un: (() => void) | undefined;
+  void (async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+
+    const fn = await listen("friends-changed", () => void fetchOnce());
+    if (dead) fn();
+    else un = fn;
+  })();
+  return () => {
+    dead = true;
+    un?.();
+  };
+}
+
+let unlistenRealtime: (() => void) | undefined;
+
 function start() {
   void fetchOnce();
 
@@ -72,6 +98,7 @@ function start() {
   }, POLL_MS);
   window.addEventListener("aciron-account", onAccount);
   window.addEventListener("focus", onFocus);
+  unlistenRealtime = listenRealtime();
 }
 
 function stop() {
@@ -79,6 +106,8 @@ function stop() {
   timer = null;
   window.removeEventListener("aciron-account", onAccount);
   window.removeEventListener("focus", onFocus);
+  unlistenRealtime?.();
+  unlistenRealtime = undefined;
 }
 
 function subscribe(cb: () => void) {

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::time::Duration;
 
-pub const APP_VERSION: &str = "0.7.7";
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const GITHUB_REPO: &str = "Acizecu/aciron-launcher";
 

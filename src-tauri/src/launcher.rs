@@ -538,6 +538,32 @@ async fn prepare_and_launch(
     download_file_checked(&dl_client, client_url, &client_jar, client_sha1, client_size).await?;
     emit(app, "client", "Клиент загружен", 1, 1);
 
+    // 3.1) Официальные маппинги обфускации.
+    //
+    // Mojang публикует их начиная с 1.14.4 — по ним агент находит классы игры по
+    // настоящим именам. Без этого пришлось бы возить свою таблицу под каждую
+    // версию и чинить её после каждого обновления игры.
+    //
+    // Отсутствие маппингов НЕ ошибка: в 1.13.2 и старее их просто нет, и всё
+    // остальное обязано работать как раньше. По той же причине падение загрузки
+    // здесь не роняет запуск — потеряются только значки.
+    if let Some(m) = version_json["downloads"].get("client_mappings") {
+        if let Some(url) = m["url"].as_str().filter(|u| !u.is_empty()) {
+            let path = version_dir.join(format!("{version}-mappings.txt"));
+            if let Err(e) = download_file_checked(
+                &dl_client,
+                url,
+                &path,
+                m["sha1"].as_str(),
+                m["size"].as_u64(),
+            )
+            .await
+            {
+                eprintln!("[mappings] не загрузились ({e}) — значки в игре работать не будут");
+            }
+        }
+    }
+
     // 4) Библиотеки + нативы
     let empty = vec![];
     let libs = version_json["libraries"].as_array().unwrap_or(&empty);
@@ -790,15 +816,29 @@ async fn prepare_and_launch(
     // Aciron ID (аргумент — адрес сервиса), а если их нет — скин лицензионного
     // аккаунта Mojang по нику. Работает и на пиратке, свой сервер не нужен.
     if let Some(jar) = ensure_aciron_skins(&root) {
-        // badge=2605 (★) — видимый символ значка без ресурспака; self=<ник> — сам игрок
-        // всегда со значком (он и есть на Aciron-лаунчере), значок виден сразу без моста.
-        // Список остальных игроков с лаунчера подтянет bridge= (будущий локальный мост).
-        args.push(format!(
-            "-javaagent:{}={}|badge=2605|self={}",
-            jar.to_string_lossy(),
-            crate::aciron::base(),
-            id.name
-        ));
+        // Аргумент агента: адрес сервиса, а за ним — необязательные пары через '|'.
+        // Первым полем по-прежнему голый адрес, чтобы старый агент (у него в
+        // сборках на диске может лежать прошлая версия) продолжал понимать строку.
+        let mut arg = crate::aciron::base().to_string();
+        // Значок в табе — без ресурспака: рисуем видимым символом ★ (U+2605), это
+        // работает на любой версии и ничего лишнего в папку игры не кладёт.
+        // Тумблер settings.launcher_badges: выключен — не добавляем badge/self вовсе.
+        if settings.launcher_badges {
+            // Список остальных игроков с лаунчера подтянет bridge= (локальный мост).
+            if let Some(bridge) = crate::bridge::endpoint() {
+                arg.push_str(&format!("|bridge={bridge}"));
+            }
+            // badge=2605 (★) — видимый символ значка без ресурспака; self=<ник> —
+            // сам игрок всегда со значком, он виден сразу без моста.
+            arg.push_str(&format!("|badge=2605|self={}", id.name));
+            // Маппинги есть не у всякой версии (1.13.2 и старее их не публикуют).
+            // Нет файла — агент просто не найдёт классы и значков не покажет.
+            let maps = version_dir.join(format!("{version}-mappings.txt"));
+            if maps.exists() {
+                arg.push_str(&format!("|mappings={}", maps.to_string_lossy()));
+            }
+        }
+        args.push(format!("-javaagent:{}={}", jar.to_string_lossy(), arg));
     }
     // JVM-аргументы загрузчика модов (например -DFabricMcEmu) — до -cp и main class.
     args.extend(loader_jvm_args);
@@ -982,8 +1022,18 @@ async fn resolve_identity(app: &AppHandle, settings: &Settings) -> Result<Identi
             let fresh = match crate::microsoft::refresh_account(&a.refresh_token).await {
                 Ok(f) => f,
                 Err(e) => {
-                    // Тихо обновить не вышло — просим войти прямо сейчас.
+                    // Тихо обновить не вышло — просим войти прямо сейчас. Обязательно
+                    // говорим об этом в полосу запуска: интерактивный вход ждёт код на
+                    // loopback до двух минут, и без подписи это выглядит как зависший
+                    // запуск — человек не понимает, что от него ждут действия в браузере.
                     eprintln!("[account] обновление сессии Microsoft не удалось: {e}");
+                    emit(
+                        app,
+                        "identity",
+                        "Нужен вход Microsoft — открыли браузер",
+                        0,
+                        1,
+                    );
                     let f = crate::microsoft::interactive_login(app.clone()).await?;
                     // Свежий refresh-токен нужен и сервису: он ходит в Mojang за
                     // скином и плащами лицензии от имени игрока.

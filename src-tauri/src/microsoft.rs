@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -25,6 +25,30 @@ fn http() -> Result<reqwest::Client, String> {
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())
+}
+
+const AUTH_WINDOW: &str = "ms-auth";
+
+fn open_auth_window(app: &AppHandle, url: &str) -> Option<tauri::WebviewWindow> {
+    let parsed = url.parse().ok()?;
+
+    if let Some(old) = app.get_webview_window(AUTH_WINDOW) {
+        let _ = old.close();
+    }
+    match tauri::WebviewWindowBuilder::new(app, AUTH_WINDOW, tauri::WebviewUrl::External(parsed))
+        .title("Вход через Microsoft")
+        .inner_size(520.0, 720.0)
+        .min_inner_size(400.0, 560.0)
+        .center()
+        .focused(true)
+        .build()
+    {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("[microsoft] окно входа не открылось ({e}) — уходим в браузер");
+            None
+        }
+    }
 }
 
 fn urlencode(s: &str) -> String {
@@ -103,10 +127,37 @@ pub async fn interactive_login(app: AppHandle) -> Result<Account, String> {
         ch = challenge,
         st = state,
     );
-    let _ = app.emit("ms-auth-open", json!({ "url": auth_url }));
+
+    let auth_window = open_auth_window(&app, &auth_url);
+
+    let _ = app.emit(
+        "ms-auth-open",
+        json!({ "url": auth_url, "embedded": auth_window.is_some() }),
+    );
+
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
+    if let Some(w) = &auth_window {
+        let tx = std::sync::Mutex::new(Some(closed_tx));
+        w.on_window_event(move |e| {
+            if matches!(e, tauri::WindowEvent::Destroyed) {
+                if let Ok(mut g) = tx.lock() {
+                    if let Some(t) = g.take() {
+                        let _ = t.send(());
+                    }
+                }
+            }
+        });
+    }
 
     // HNS-06: уменьшенное время ожидания интерактивного входа (120 с)
-    let code = wait_for_code(&listener, Duration::from_secs(120), &state).await?;
+    let code = tokio::select! {
+        r = wait_for_code(&listener, Duration::from_secs(120), &state) => r,
+        _ = closed_rx => Err("Окно входа Microsoft закрыто — вход отменён".to_string()),
+    };
+    if let Some(w) = &auth_window {
+        let _ = w.close();
+    }
+    let code = code?;
 
     let cl = http()?;
     let tok: Value = cl

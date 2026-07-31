@@ -33,22 +33,64 @@ export function withTimeout<T>(p: Promise<T>, ms = 20000): Promise<T> {
   ]);
 }
 
-// ── Кэш read-only запросов: мгновенная отдача + фоновое обновление ───────────
-// Компоненты берут cachePeek(key) для мгновенного первого рендера, затем зовут
-// cached(key, ttl, fetcher) для актуализации. Мутации вызывают cacheBust(prefix).
+// ── Кэш read-only запросов: мгновенно из памяти/localStorage + фон ───────────
+// cachePeek(key) — мгновенный первый рендер (в т.ч. ПОСЛЕ перезапуска лаунчера:
+// избранные ключи хранятся в localStorage). cached(key, ttl, fetcher) —
+// актуализация: свежее из кэша, иначе запрос; при ОШИБКЕ бросает, но прежнее
+// сохранённое значение остаётся (UI показывает его + «не удалось обновить»).
 type CacheBox<T> = { at: number; data: T; inflight?: Promise<T> };
 const _cache = new Map<string, CacheBox<unknown>>();
 const _subs = new Map<string, Set<() => void>>();
 
-/** Синхронно достать закэшированное значение (для мгновенного первого рендера). */
-export function cachePeek<T>(key: string): T | undefined {
-  return _cache.get(key)?.data as T | undefined;
+// Ключи, переживающие перезапуск лаунчера (localStorage).
+const PERSIST = /^(wardrobe|skin-catalog|cape-catalog|license-capes|mc-versions|cats:|builds|friends)/;
+const LS_PREFIX = "acache:";
+
+function _loadLS<T>(key: string): CacheBox<T> | undefined {
+  if (!PERSIST.test(key)) return undefined;
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (!raw) return undefined;
+    const box = JSON.parse(raw) as CacheBox<T>;
+    return box && box.data !== undefined ? box : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function _saveLS(key: string, box: CacheBox<unknown>): void {
+  if (!PERSIST.test(key)) return;
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify({ at: box.at, data: box.data }));
+  } catch {
+    /* квота/сериализация — не критично */
+  }
 }
 
-/** Сбросить кэш по точному ключу или префиксу (после мутаций). */
+/** Синхронно достать сохранённое значение (память → localStorage) для мгновенного рендера. */
+export function cachePeek<T>(key: string): T | undefined {
+  let e = _cache.get(key) as CacheBox<T> | undefined;
+  if (!e) {
+    const ls = _loadLS<T>(key);
+    if (ls) {
+      _cache.set(key, ls);
+      e = ls;
+    }
+  }
+  return e?.data;
+}
+
+/** Сбросить кэш (память + localStorage) по точному ключу или префиксу. */
 export function cacheBust(prefix: string): void {
   for (const k of [..._cache.keys()]) {
     if (k === prefix || k.startsWith(prefix)) _cache.delete(k);
+  }
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX + prefix)) localStorage.removeItem(k);
+    }
+  } catch {
+    /* нет localStorage */
   }
   for (const k of [..._subs.keys()]) {
     if (k === prefix || k.startsWith(prefix)) _emit(k);
@@ -76,31 +118,41 @@ function _emit(key: string): void {
 }
 
 /**
- * stale-while-revalidate: свежий кэш (< ttl) — сразу; устаревший — сразу старое
- * значение + фоновое обновление с уведомлением подписчиков; нет данных — ждём.
- * Параллельные вызовы одного ключа дедуплицируются.
+ * Свежее (< ttl) — сразу из кэша; иначе запрос (с дедупом). Успех — обновляет
+ * память + localStorage. Ошибка — БРОСАЕТ, но прежнее сохранённое значение в кэше
+ * остаётся (cachePeek его вернёт), поэтому UI показывает сохранённое + «не удалось
+ * обновить», а не пустоту.
  */
 export async function cached<T>(key: string, ttl: number, fetcher: () => Promise<T>): Promise<T> {
-  const e = _cache.get(key) as CacheBox<T> | undefined;
+  let e = _cache.get(key) as CacheBox<T> | undefined;
+  if (!e) {
+    const ls = _loadLS<T>(key);
+    if (ls) {
+      _cache.set(key, ls);
+      e = ls;
+    }
+  }
   const now = Date.now();
   if (e && e.data !== undefined && now - e.at < ttl) return e.data;
   if (e?.inflight) return e.inflight;
   const run = fetcher()
     .then((data) => {
-      _cache.set(key, { at: Date.now(), data });
+      const box: CacheBox<T> = { at: Date.now(), data };
+      _cache.set(key, box);
+      _saveLS(key, box);
       _emit(key);
       return data;
     })
     .catch((err) => {
       const c = _cache.get(key) as CacheBox<T> | undefined;
-      if (c) c.inflight = undefined; // оставляем прежние данные, дадим повторить
+      if (c) c.inflight = undefined; // прежнее значение остаётся, дадим повторить
       throw err;
     });
   if (e && e.data !== undefined) {
-    e.inflight = run; // отдаём старое, обновляем в фоне
-    return e.data;
+    e.inflight = run;
+  } else {
+    _cache.set(key, { at: 0, data: undefined as unknown as T, inflight: run });
   }
-  _cache.set(key, { at: 0, data: undefined as unknown as T, inflight: run });
   return run;
 }
 
@@ -444,37 +496,44 @@ const mockFriends: FriendsData = {
 
 export async function friendsList(): Promise<FriendsData> {
   if (!isTauri) return structuredClone(mockFriends);
-  return invoke<FriendsData>("friends_list");
+  return cached("friends", 5_000, () => invoke<FriendsData>("friends_list"));
 }
 
 export async function friendRequest(username: string): Promise<"requested" | "accepted"> {
   if (!isTauri) return "requested";
-  return invoke<"requested" | "accepted">("friend_request", { username });
+  const r = await invoke<"requested" | "accepted">("friend_request", { username });
+  cacheBust("friends");
+  return r;
 }
 
 export async function friendRespond(user_id: string, accept: boolean): Promise<void> {
   if (!isTauri) return;
   await invoke("friend_respond", { userId: user_id, accept });
+  cacheBust("friends");
 }
 
 export async function friendCancel(user_id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("friend_cancel", { userId: user_id });
+  cacheBust("friends");
 }
 
 export async function friendRemove(user_id: string): Promise<void> {
   if (!isTauri) return;
   await invoke("friend_remove", { userId: user_id });
+  cacheBust("friends");
 }
 
 export async function setPresenceStatus(status: PresenceStatus): Promise<void> {
   if (!isTauri) return;
   await invoke("set_presence_status", { status });
+  cacheBust("friends");
 }
 
 export async function setAcceptRequests(enabled: boolean): Promise<void> {
   if (!isTauri) return;
   await invoke("set_accept_requests", { enabled });
+  cacheBust("friends");
 }
 
 export async function setPresencePrivacy(showGame: boolean, showServer: boolean): Promise<void> {

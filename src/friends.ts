@@ -1,6 +1,6 @@
 
 import { useSyncExternalStore } from "react";
-import { friendsList, type FriendPresence, type FriendsData, type PresenceState } from "./api";
+import { cachePeek, friendsList, type FriendPresence, type FriendsData, type PresenceState } from "./api";
 
 const POLL_MS = 15_000;
 
@@ -11,7 +11,8 @@ export type FriendsSnapshot = {
   loading: boolean;
 };
 
-let snap: FriendsSnapshot = { data: null, error: "", loading: false };
+// Мгновенный старт из сохранённого кэша (переживает перезапуск лаунчера).
+let snap: FriendsSnapshot = { data: cachePeek<FriendsData>("friends") ?? null, error: "", loading: false };
 const subs = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let inflight = false;

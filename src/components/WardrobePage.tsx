@@ -133,6 +133,7 @@ export default function WardrobePage() {
   const [data, setData] = useState<WardrobeData | null>(() => cachePeek<WardrobeData>("wardrobe") ?? null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(() => !cachePeek<WardrobeData>("wardrobe"));
+  const [stale, setStale] = useState(false);
   const [nick, setNick] = useState("");
   const [signIn, setSignIn] = useState(false);
   const [busy, setBusy] = useState("");
@@ -169,8 +170,16 @@ export default function WardrobePage() {
       if (!d.active.model) d.active.model = "classic";
       setData(d);
       setError("");
+      setStale(false);
     } catch (e) {
-      setError(String(e).replace(/^Error:\s*/, ""));
+      const msg = String(e).replace(/^Error:\s*/, "");
+      // Экран входа — только для NO_ACIRON/SESSION_EXPIRED или когда данных нет вовсе.
+      // Иначе НЕ стираем сохранённое: показываем баннер «не удалось обновить».
+      if (msg === "NO_ACIRON" || msg === "SESSION_EXPIRED" || !cachePeek<WardrobeData>("wardrobe")) {
+        setError(msg);
+      } else {
+        setStale(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -235,6 +244,7 @@ export default function WardrobePage() {
         if (mine === seq.current) {
           await load();
           setBust(Date.now());
+          toast("Сохранено", "success");
         }
       } catch (e) {
         if (mine !== seq.current) return;
@@ -538,6 +548,9 @@ export default function WardrobePage() {
               <div className="rounded-xl bg-card p-4 text-center text-sm text-muted">{error}</div>
             ) : (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4 pb-2">
+                {stale && (
+                  <Notice text="Не удалось обновить данные — показаны сохранённые. Проверьте соединение с Aciron ID." />
+                )}
                 {tab === "skins" && (
                   <>
                     <Notice text="Скины видны только игрокам, зашедшим в игру через лаунчер Aciron." />

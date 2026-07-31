@@ -14,7 +14,7 @@ const DOWNLOAD_URL: &str = "https://aciron.pro";
 enum State {
     Idle,
     Version(String),
-    Build { name: String },
+    Build { name: String, image: Option<String> },
 }
 
 fn slot() -> &'static Mutex<Option<DiscordIpcClient>> {
@@ -90,7 +90,7 @@ pub fn set_enabled(on: bool) {
         match st {
             State::Idle => set_idle(),
             State::Version(v) => set_version(&v),
-            State::Build { name } => set_build(&name),
+            State::Build { name, image } => set_build(&name, image.as_deref()),
         }
     } else if let Ok(mut g) = slot().lock() {
         if let Some(c) = g.as_mut() {
@@ -158,25 +158,36 @@ pub fn set_version(version: &str) {
     );
 }
 
-/// «Играет в <сборка>» — логотип + трава (обложку по названию не ищем).
-pub fn set_build(name: &str) {
+/// «Играет в <сборка>». Если у сборки есть публичная иконка (icon_url с Modrinth
+/// и т.п.) — показываем её как большую картинку, а логотип Aciron уводим в
+/// маленькую. Discord сам проксирует http(s)-ссылки в ассеты Rich Presence.
+/// Без иконки — прежний вид (логотип + трава).
+pub fn set_build(name: &str, image: Option<&str>) {
+    let image = image.filter(|u| u.starts_with("http")).map(str::to_string);
     if let Ok(mut s) = last_state().lock() {
-        *s = State::Build { name: name.to_string() };
+        *s = State::Build { name: name.to_string(), image: image.clone() };
     }
     if !configured() || !enabled() {
         return;
     }
+    let details = format!("Играет в {name}");
+    let assets = match image.as_deref() {
+        Some(url) => Assets::new()
+            .large_image(url)
+            .large_text(name)
+            .small_image("logo")
+            .small_text("Aciron Launcher"),
+        None => Assets::new()
+            .large_image("logo")
+            .large_text("Aciron Launcher")
+            .small_image("grass")
+            .small_text(name),
+    };
     apply(
         Activity::new()
-            .details(&format!("Играет в {name}"))
+            .details(&details)
             .state("Сборка Minecraft")
-            .assets(
-                Assets::new()
-                    .large_image("logo")
-                    .large_text("Aciron Launcher")
-                    .small_image("grass")
-                    .small_text(name),
-            )
+            .assets(assets)
             .timestamps(Timestamps::new().start(session_start()))
             .buttons(download_button()),
     );

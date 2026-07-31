@@ -1310,7 +1310,8 @@ pub async fn launch_build(app: AppHandle, build_id: String) -> Result<(), String
     match &res {
         Ok(_) => {
 
-            crate::discord::set_build(&build.name);
+            let icon = if build.icon_url.is_empty() { None } else { Some(build.icon_url.as_str()) };
+            crate::discord::set_build(&build.name, icon);
         }
         Err(e) => emit(&app, "error", e, 0, 1),
     }

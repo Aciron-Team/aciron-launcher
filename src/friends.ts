@@ -40,6 +40,22 @@ export function refreshFriends() {
   void fetchOnce();
 }
 
+/**
+ * Оптимистичное изменение состояния друзей: мгновенно применяет мутацию к
+ * локальному снапшоту и возвращает предыдущее состояние как токен отката.
+ * Фоновый запрос вызывающий делает сам; при ошибке — restoreFriends(prev).
+ */
+export function patchFriends(fn: (d: FriendsData) => FriendsData): FriendsData | null {
+  if (!snap.data) return null;
+  const prev = snap.data;
+  emit({ data: fn(structuredClone(prev)) });
+  return prev;
+}
+
+export function restoreFriends(prev: FriendsData | null) {
+  if (prev) emit({ data: prev });
+}
+
 const onAccount = () => {
   snap = { data: null, error: "", loading: true };
   for (const f of subs) f();

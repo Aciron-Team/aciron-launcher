@@ -790,10 +790,14 @@ async fn prepare_and_launch(
     // Aciron ID (аргумент — адрес сервиса), а если их нет — скин лицензионного
     // аккаунта Mojang по нику. Работает и на пиратке, свой сервер не нужен.
     if let Some(jar) = ensure_aciron_skins(&root) {
+        // badge=2605 (★) — видимый символ значка без ресурспака; self=<ник> — сам игрок
+        // всегда со значком (он и есть на Aciron-лаунчере), значок виден сразу без моста.
+        // Список остальных игроков с лаунчера подтянет bridge= (будущий локальный мост).
         args.push(format!(
-            "-javaagent:{}={}",
+            "-javaagent:{}={}|badge=2605|self={}",
             jar.to_string_lossy(),
-            crate::aciron::base()
+            crate::aciron::base(),
+            id.name
         ));
     }
     // JVM-аргументы загрузчика модов (например -DFabricMcEmu) — до -cp и main class.
